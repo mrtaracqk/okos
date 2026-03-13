@@ -17,6 +17,38 @@ type ModelProvider = 'google' | 'groq' | 'openai';
 export const MODEL_PROVIDER = (process.env.MODEL_PROVIDER || 'openai') as ModelProvider;
 export const MODEL_VISION_PROVIDER = (process.env.MODEL_VISION_PROVIDER || MODEL_PROVIDER) as ModelProvider;
 export const MODEL_UTILITY_PROVIDER = (process.env.MODEL_UTILITY_PROVIDER || MODEL_PROVIDER) as ModelProvider;
+export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL?.trim() || undefined;
+
+function createOpenAIModel(modelName: string, temperature: number) {
+  return new ChatOpenAI({
+    ...(process.env.OPENAI_API_KEY ? { apiKey: process.env.OPENAI_API_KEY } : {}),
+    modelName,
+    temperature,
+    maxRetries: 2,
+    supportsStrictToolCalling: false,
+    ...(OPENAI_BASE_URL
+      ? {
+          configuration: {
+            baseURL: OPENAI_BASE_URL,
+          },
+        }
+      : {}),
+  });
+}
+
+export function createOpenAITokenCounter(modelName = 'gpt-4o') {
+  return new ChatOpenAI({
+    ...(process.env.OPENAI_API_KEY ? { apiKey: process.env.OPENAI_API_KEY } : {}),
+    modelName,
+    ...(OPENAI_BASE_URL
+      ? {
+          configuration: {
+            baseURL: OPENAI_BASE_URL,
+          },
+        }
+      : {}),
+  });
+}
 
 function createChatModel(type: 'chat' | 'utility' | 'vision') {
   const temperature = type === 'chat' ? 0.5 : 0;
@@ -26,12 +58,7 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
       const provider = MODEL_VISION_PROVIDER || MODEL_PROVIDER;
       switch (provider) {
         case 'openai':
-          return new ChatOpenAI({
-            apiKey: process.env.OPENAI_API_KEY!,
-            modelName: process.env.OPENAI_VISION_MODEL_NAME || 'gpt-4o',
-            temperature,
-            maxRetries: 2,
-          });
+          return createOpenAIModel(process.env.OPENAI_VISION_MODEL_NAME || 'gpt-4o', temperature);
         case 'google':
           return new ChatGoogleGenerativeAI({
             apiKey: process.env.GOOGLE_API_KEY!,
@@ -47,12 +74,7 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
             maxRetries: 2,
           });
         default:
-          return new ChatOpenAI({
-            apiKey: process.env.OPENAI_API_KEY!,
-            modelName: process.env.OPENAI_VISION_MODEL_NAME || 'gpt-4o',
-            temperature,
-            maxRetries: 2,
-          });
+          return createOpenAIModel(process.env.OPENAI_VISION_MODEL_NAME || 'gpt-4o', temperature);
       }
     }
 
@@ -60,12 +82,7 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
       const provider = MODEL_UTILITY_PROVIDER || MODEL_PROVIDER;
       switch (provider) {
         case 'openai':
-          return new ChatOpenAI({
-            apiKey: process.env.OPENAI_API_KEY!,
-            modelName: process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
-            temperature,
-            maxRetries: 2,
-          });
+          return createOpenAIModel(process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini', temperature);
         case 'google':
           return new ChatGoogleGenerativeAI({
             apiKey: process.env.GOOGLE_API_KEY!,
@@ -81,12 +98,7 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
             maxRetries: 2,
           });
         default:
-          return new ChatOpenAI({
-            apiKey: process.env.OPENAI_API_KEY!,
-            modelName: process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
-            temperature,
-            maxRetries: 2,
-          });
+          return createOpenAIModel(process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini', temperature);
       }
     }
 
@@ -96,12 +108,7 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
 
       switch (MODEL_PROVIDER) {
         case 'openai':
-          chatModel = new ChatOpenAI({
-            apiKey: process.env.OPENAI_API_KEY!,
-            modelName: process.env.OPENAI_MODEL_NAME || 'gpt-4o',
-            temperature,
-            maxRetries: 2,
-          });
+          chatModel = createOpenAIModel(process.env.OPENAI_MODEL_NAME || 'gpt-4o', temperature);
           break;
         case 'google':
           chatModel = new ChatGoogleGenerativeAI({
@@ -120,12 +127,7 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
           });
           break;
         default:
-          chatModel = new ChatOpenAI({
-            apiKey: process.env.OPENAI_API_KEY!,
-            modelName: process.env.OPENAI_MODEL_NAME || 'gpt-4o',
-            temperature,
-            maxRetries: 2,
-          });
+          chatModel = createOpenAIModel(process.env.OPENAI_MODEL_NAME || 'gpt-4o', temperature);
           break;
       }
 

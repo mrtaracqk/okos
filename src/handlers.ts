@@ -1,8 +1,7 @@
 import { HumanMessage, isAIMessage, trimMessages } from '@langchain/core/messages';
-import { ChatOpenAI } from '@langchain/openai';
 import TelegramBot from 'node-telegram-bot-api';
 import { mainGraph } from './agents/main/graphs/main.graph';
-import { CHAT_CONFIG, STICKER } from './config';
+import { CHAT_CONFIG, STICKER, createOpenAITokenCounter } from './config';
 import { AIService } from './services/ai';
 import { RedisService } from './services/redis';
 import TelegramService from './services/telegram';
@@ -34,7 +33,7 @@ export async function handleMessage(chatId: number, text: string) {
     const trimmedMessages = await trimMessages(state.messages, {
       maxTokens: 4096,
       strategy: 'last',
-      tokenCounter: new ChatOpenAI({ model: 'gpt-4o' }),
+      tokenCounter: createOpenAITokenCounter(process.env.OPENAI_MODEL_NAME || 'gpt-4o'),
       startOn: 'human',
       includeSystem: true,
     });

@@ -62,6 +62,7 @@ cp .env.docker.example .env.docker
 - `OKOS_ADMIN_USERNAME`: Telegram username of the admin user
 - `MODEL_PROVIDER`: Choose from 'openai', 'google', or 'groq'
 - Provider-specific API keys and model names
+- `OPENAI_BASE_URL` for OpenAI-compatible endpoints (optional)
 - Redis URL
 - (Optional) LangSmith credentials for monitoring
 
@@ -122,6 +123,7 @@ Cloud deployment:
 
 - OpenAI:
   - `OPENAI_API_KEY`
+  - `OPENAI_BASE_URL` (optional, example: `https://polza.ai/api/v1`) - For OpenAI-compatible providers
   - `OPENAI_MODEL_NAME` (default: gpt-4o) - Must support native tool use
   - `OPENAI_UTILITY_MODEL_NAME` (default: gpt-4o-mini) - For utility tasks
   - `OPENAI_VISION_MODEL_NAME` (default: gpt-4o) - For vision tasks
