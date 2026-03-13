@@ -1,0 +1,10 @@
+services:
+  redis:
+    image: redis
+    container_name: okos-redis-dev
+    volumes:
+      - ./redis-data-dev:/data
+    command: redis-server --appendonly yes
+    ports:
+      - '6379:6379'
+    restart: unless-stopped

@@ -2,11 +2,11 @@
 
 [![Build](https://github.com/johnnybui/okos/actions/workflows/build.yml/badge.svg)](https://github.com/johnnybui/okos/actions/workflows/build.yml)
 
-Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and multiple AI model providers. It maintains conversation context and provides summaries of interactions. Version 2 (current) uses native tool capabilities of modern LLMs for enhanced performance.
+Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and cloud AI model providers. It maintains conversation context and provides summaries of interactions. Version 2 (current) uses native tool capabilities of modern LLMs for enhanced performance.
 
 ## Features
 
-- Multiple AI model support (OpenAI, Google Gemini, Groq, Ollama)
+- Multiple AI model support (OpenAI, Google Gemini, Groq)
 - Native tool use for enhanced performance and reliability
 - Conversation context management
 - Automatic conversation summarization
@@ -26,7 +26,6 @@ Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and multiple A
 - Telegram Bot Token from [BotFather](https://t.me/botfather)
 - API keys for chosen AI providers
 - Redis server
-- Ollama with Llama model installed (for Ollama model provider)
 - **Important:** For chat models, you must use models with native tool-calling capabilities (e.g., GPT-4o, Gemini-2.0-flash)
 
 ## Prebuilt Docker Image
@@ -61,7 +60,7 @@ cp .env.docker.example .env.docker
 - `TELEGRAM_BOT_TOKEN`: Your Telegram bot token
 - `OKOS_TOKEN`: Access token for user authentication
 - `OKOS_ADMIN_USERNAME`: Telegram username of the admin user
-- `MODEL_PROVIDER`: Choose from 'ollama', 'google', 'groq', or 'openai'
+- `MODEL_PROVIDER`: Choose from 'openai', 'google', or 'groq'
 - Provider-specific API keys and model names
 - Redis URL
 - (Optional) LangSmith credentials for monitoring
@@ -71,8 +70,14 @@ cp .env.docker.example .env.docker
 Development mode with hot reload:
 
 ```bash
+cp .env.example .env
+# set MODEL_PROVIDER to openai, google, or groq
+# set REDIS_URL=redis://localhost:6379
+bun up:dev
 bun dev
 ```
+
+For local development, `docker-compose.dev.yml` starts only Redis. The bot runs on your host via `bun dev`, so you keep hot reload and use cloud providers directly.
 
 Production mode:
 
@@ -83,32 +88,10 @@ bun start
 
 ## Docker Deployment
 
-You can deploy using one of two options:
-
-### 1. Local Deployment with Ollama
-
-For local LLM inference:
+Cloud deployment:
 
 1. **Build Containers** (optional):  
-   Use the command below to build the containers. Alternatively, to use a prebuilt image, edit the `docker-compose` file, replacing the `build: .` line with:
-   ```yaml
-   image: ghcr.io/johnnybui/okos
-   ```
-   Run build:
-   ```bash
-   bun build:ollama
-   ```
-2. **Start Services**:
-   ```bash
-   bun up:ollama
-   ```
-
-### 2. Cloud Deployment
-
-For cloud-based AI providers (OpenAI, Google, Groq):
-
-1. **Build Containers** (optional):  
-   Similar to local deployment, replace `build: .` in the `docker-compose` file with the prebuilt image if desired:
+   Replace `build: .` in `docker-compose-cloud.yml` with the prebuilt image if desired:
    ```yaml
    image: ghcr.io/johnnybui/okos
    ```
@@ -128,7 +111,7 @@ For cloud-based AI providers (OpenAI, Google, Groq):
 - `TELEGRAM_BOT_TOKEN`: Telegram Bot token
 - `OKOS_TOKEN`: Access token for user authentication
 - `OKOS_ADMIN_USERNAME`: Telegram username of the admin user
-- `MODEL_PROVIDER`: AI model provider ('ollama', 'google', 'groq', or 'openai')
+- `MODEL_PROVIDER`: AI model provider ('openai', 'google', or 'groq')
 - `SEARCH_PROVIDER`: Search provider ('tavily' or 'brave')
 - `TAVILY_API_KEY`: Tavily API key for internet searching
 - `BRAVE_SEARCH_API_KEY`: Brave Search API key for internet searching
@@ -152,12 +135,6 @@ For cloud-based AI providers (OpenAI, Google, Groq):
   - `GROQ_MODEL_NAME` (default: llama-3.3-70b-versatile) - Must support native tool use
   - `GROQ_UTILITY_MODEL_NAME` (default: llama-3.1-8b-instant) - For utility tasks
   - `GROQ_VISION_MODEL_NAME` (default: llama-3.2-90b-vision-preview) - For vision tasks
-- Ollama:
-  - `OLLAMA_API_URL`
-  - `OLLAMA_MODEL_NAME` (default: llama3.2) - Must support native tool use
-  - `OLLAMA_UTILITY_MODEL_NAME` (default: qwen2.5:1b) - For utility tasks
-  - `OLLAMA_VISION_MODEL_NAME` (default: llama-3.2-vision) - For vision tasks
-
 ### Optional
 
 - `LANGCHAIN_TRACING_V2`: Enable LangSmith tracing

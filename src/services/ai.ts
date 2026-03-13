@@ -16,7 +16,7 @@ export class AIService {
 
     const provider = MODEL_VISION_PROVIDER || MODEL_PROVIDER;
 
-    if (provider === 'openai' || provider === 'ollama') {
+    if (provider === 'openai') {
       const systemMessage = new SystemMessage(PROMPTS.VISION.SYSTEM());
       const humanMessage = new HumanMessage({
         content: [

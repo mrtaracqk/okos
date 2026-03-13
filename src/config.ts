@@ -1,6 +1,5 @@
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { ChatGroq } from '@langchain/groq';
-import { ChatOllama } from '@langchain/ollama';
 import { ChatOpenAI } from '@langchain/openai';
 import Groq from 'groq-sdk';
 import { RedisService } from './services/redis';
@@ -13,10 +12,9 @@ if (!process.env.TELEGRAM_BOT_TOKEN) {
 }
 
 export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-export const OLLAMA_API_URL = process.env.OLLAMA_API_URL || 'http://localhost:11434';
 
-type ModelProvider = 'ollama' | 'google' | 'groq' | 'openai';
-export const MODEL_PROVIDER = (process.env.MODEL_PROVIDER || 'ollama') as ModelProvider;
+type ModelProvider = 'google' | 'groq' | 'openai';
+export const MODEL_PROVIDER = (process.env.MODEL_PROVIDER || 'openai') as ModelProvider;
 export const MODEL_VISION_PROVIDER = (process.env.MODEL_VISION_PROVIDER || MODEL_PROVIDER) as ModelProvider;
 export const MODEL_UTILITY_PROVIDER = (process.env.MODEL_UTILITY_PROVIDER || MODEL_PROVIDER) as ModelProvider;
 
@@ -48,11 +46,10 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
             temperature,
             maxRetries: 2,
           });
-        case 'ollama':
         default:
-          return new ChatOllama({
-            baseUrl: OLLAMA_API_URL,
-            model: process.env.OLLAMA_VISION_MODEL_NAME || 'llama3.2-vision',
+          return new ChatOpenAI({
+            apiKey: process.env.OPENAI_API_KEY!,
+            modelName: process.env.OPENAI_VISION_MODEL_NAME || 'gpt-4o',
             temperature,
             maxRetries: 2,
           });
@@ -83,11 +80,10 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
             temperature,
             maxRetries: 2,
           });
-        case 'ollama':
         default:
-          return new ChatOllama({
-            baseUrl: OLLAMA_API_URL,
-            model: process.env.OLLAMA_UTILITY_MODEL_NAME || 'qwen2.5:1b',
+          return new ChatOpenAI({
+            apiKey: process.env.OPENAI_API_KEY!,
+            modelName: process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
             temperature,
             maxRetries: 2,
           });
@@ -96,7 +92,7 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
 
     case 'chat':
     default: {
-      let chatModel: ChatOpenAI | ChatGoogleGenerativeAI | ChatGroq | ChatOllama;
+      let chatModel: ChatOpenAI | ChatGoogleGenerativeAI | ChatGroq;
 
       switch (MODEL_PROVIDER) {
         case 'openai':
@@ -123,11 +119,10 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
             maxRetries: 2,
           });
           break;
-        case 'ollama':
         default:
-          chatModel = new ChatOllama({
-            baseUrl: OLLAMA_API_URL,
-            model: process.env.OLLAMA_MODEL_NAME || 'llama3.2',
+          chatModel = new ChatOpenAI({
+            apiKey: process.env.OPENAI_API_KEY!,
+            modelName: process.env.OPENAI_MODEL_NAME || 'gpt-4o',
             temperature,
             maxRetries: 2,
           });
