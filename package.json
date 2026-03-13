@@ -10,7 +10,10 @@
   "scripts": {
     "build": "bun build ./src/app.ts --outdir=dist --target bun",
     "dev": "bun --watch src/app.ts",
+    "studio": "langgraphjs dev",
     "start": "bun dist/app.js",
+    "generate:woocommerce-tools": "node ./tools/woocommerce/export-mcporter-tools.mjs ./tools/woocommerce/woocommerce-tools.snapshot.json ./tools/woocommerce/woocommerce-worker-toolsets.json ./src/generated/woocommerceTools.generated.ts",
+    "typecheck": "tsc --noEmit",
     "up:dev": "docker compose -f ./docker-compose.dev.yml up -d",
     "down:dev": "docker compose -f ./docker-compose.dev.yml down",
     "build:cloud": "docker compose -f ./docker-compose-cloud.yml build",
@@ -26,6 +29,7 @@
     "@langchain/langgraph": "^1.2.2",
     "@langchain/openai": "^1.2.13",
     "@langchain/tavily": "^1.2.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "bullmq": "^5.41.7",
     "date-fns": "^4.1.0",
     "duck-duck-scrape": "^2.2.6",
@@ -36,6 +40,7 @@
     "node-telegram-bot-api": "^0.64.0"
   },
   "devDependencies": {
+    "@langchain/langgraph-cli": "^1.1.15",
     "@types/node-telegram-bot-api": "^0.64.1",
     "bun-types": "^1.2.0"
   }

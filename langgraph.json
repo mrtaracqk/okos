@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "okos": "./src/studio/okos.graph.ts:studioGraph"
+  },
+  "env": ".env"
+}

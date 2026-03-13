@@ -1,80 +1,13 @@
-import { BaseMessage, isAIMessage } from '@langchain/core/messages';
-import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
-import { ToolNode } from '@langchain/langgraph/prebuilt';
-import TelegramBot from 'node-telegram-bot-api';
-import { redisService, STICKER } from '../../../config';
-import TelegramService from '../../../services/telegram';
-import { pickRandomElement } from '../../../utils';
-import { memorizeAgentNode } from '../nodes/memorizeAgent.node';
+import { BaseMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
+import { Annotation, BaseCheckpointSaver, END, START, StateGraph, getConfig } from '@langchain/langgraph';
+import { catalogAgentGraph } from '../../catalog/catalog.agent';
+import { graphCheckpointer } from '../../shared/checkpointing';
+import { extractMessageText, getLastAIMessage, getLastAIMessageText } from '../../shared/messageUtils';
+import { telegramMainGraphProgressReporter, type MainGraphProgressReporter } from '../progress';
 import { responseAgentNode } from '../nodes/responseAgent.node';
-import { summarizeAgentNode } from '../nodes/summarizeAgent.node';
-import { deleteReminderTool } from '../tools/deleteReminder.tool';
-import { getRemindersTools } from '../tools/getReminders.tool';
-import { searchTool } from '../tools/search.tool';
-import { setReminderTool } from '../tools/setReminder.tool';
-import { weatherTool } from '../tools/weather.tool';
+import { delegateCatalogTool } from '../tools/delegateCatalog.tool';
 
-export const mainTools = [searchTool, weatherTool, setReminderTool, getRemindersTools, deleteReminderTool];
-let pendingActionMessage: TelegramBot.Message | undefined;
-
-const getNextRoute = async (state: typeof MainGraphStateAnnotation.State) => {
-  const { messages, chatId } = state;
-
-  const lastMessage = messages[messages.length - 1];
-  if (!isAIMessage(lastMessage)) return 'end';
-
-  if (lastMessage?.tool_calls?.length) {
-    let midWorkflowResponse: string | undefined;
-
-    // Parse the AI message for both text and complex array to send mid workflow response
-    if (typeof lastMessage.content === 'string') {
-      midWorkflowResponse = lastMessage.content;
-    } else if (Array.isArray(lastMessage.content)) {
-      midWorkflowResponse = (lastMessage.content as any[]).filter((c) => c.type === 'text')[0]?.text ?? undefined;
-    }
-
-    if (midWorkflowResponse) {
-      await redisService.saveAIMessage(chatId, midWorkflowResponse);
-      await TelegramService.sendMessage(chatId, midWorkflowResponse);
-      TelegramService.sendChatAction(chatId, 'typing');
-    }
-
-    // Send mid workflow state sticker
-    let stateSticker = pickRandomElement(STICKER.WRITING);
-    if (lastMessage.tool_calls[0].name.includes('search')) {
-      stateSticker = pickRandomElement(STICKER.SEARCHING);
-    }
-    if (lastMessage.tool_calls[0].name.includes('weather')) {
-      stateSticker = pickRandomElement(STICKER.SEARCHING);
-    }
-    if (
-      lastMessage.tool_calls[0].name.includes('set_reminder') ||
-      lastMessage.tool_calls[0].name.includes('get_reminders') ||
-      lastMessage.tool_calls[0].name.includes('delete_reminder')
-    ) {
-      stateSticker = pickRandomElement(STICKER.WRITING);
-    }
-
-    if (pendingActionMessage) {
-      TelegramService.deleteMessage(chatId, pendingActionMessage.message_id);
-      pendingActionMessage = undefined;
-    }
-    pendingActionMessage = await TelegramService.sendSticker(chatId, stateSticker);
-    TelegramService.sendChatAction(chatId, 'typing');
-
-    return 'callTools';
-  }
-
-  if (pendingActionMessage) {
-    TelegramService.deleteMessage(chatId, pendingActionMessage.message_id);
-    pendingActionMessage = undefined;
-  }
-  return 'end';
-};
-
-const summarizeCheckpointNode = async (_state: typeof MainGraphStateAnnotation.State) => {
-  return {};
-};
+export const mainTools = [delegateCatalogTool];
 
 export const MainGraphStateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
@@ -85,23 +18,91 @@ export const MainGraphStateAnnotation = Annotation.Root({
   memory: Annotation<string>(),
 });
 
-export const mainGraph = new StateGraph(MainGraphStateAnnotation)
-  .addNode('responseAgent', responseAgentNode)
-  .addNode('tools', new ToolNode(mainTools))
-  .addNode('summarizeCheckpoint', summarizeCheckpointNode)
-  .addNode('summarizeAgent', summarizeAgentNode)
-  .addNode('memorizeAgent', memorizeAgentNode)
+type CreateMainGraphOptions = {
+  checkpointer?: BaseCheckpointSaver | boolean;
+  name?: string;
+  progressReporter?: MainGraphProgressReporter;
+};
 
-  .addEdge(START, 'responseAgent')
-  .addConditionalEdges('responseAgent', getNextRoute, {
-    callTools: 'tools',
-    end: 'summarizeCheckpoint',
-  })
-  .addEdge('tools', 'responseAgent')
-  .addEdge('summarizeCheckpoint', 'summarizeAgent')
-  .addEdge('summarizeCheckpoint', 'memorizeAgent')
-  .addEdge('summarizeAgent', END)
-  .addEdge('memorizeAgent', END)
+const getMainRoute = async (state: typeof MainGraphStateAnnotation.State, progressReporter: MainGraphProgressReporter) => {
+  const lastMessage = getLastAIMessage(state.messages);
+  const hasCatalogDelegation = lastMessage?.tool_calls?.some((toolCall) => toolCall.name === delegateCatalogTool.name);
 
-  .compile();
-mainGraph.name = 'Main Telegram Bot Graph';
+  if (hasCatalogDelegation) {
+    return 'catalogAgent';
+  }
+
+  await progressReporter.onRunComplete({ chatId: state.chatId });
+  return 'end';
+};
+
+function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
+  return async (state: typeof MainGraphStateAnnotation.State): Promise<Partial<typeof MainGraphStateAnnotation.State>> => {
+    const lastMessage = getLastAIMessage(state.messages);
+    const toolCall = lastMessage?.tool_calls?.find((candidate) => candidate.name === delegateCatalogTool.name);
+
+    if (!lastMessage || !toolCall) {
+      return {};
+    }
+
+    const statusText = extractMessageText(lastMessage.content).trim() || undefined;
+    const userRequest = typeof toolCall.args?.userRequest === 'string' ? toolCall.args.userRequest.trim() : '';
+
+    if (!userRequest) {
+      return {
+        messages: [
+          new ToolMessage({
+            tool_call_id: toolCall.id ?? toolCall.name,
+            name: toolCall.name,
+            content: 'Catalog handoff failed: missing required "userRequest" argument.',
+          }),
+        ],
+      };
+    }
+
+    await progressReporter.onCatalogDelegation({
+      chatId: state.chatId,
+      statusText,
+    });
+
+    const result = await catalogAgentGraph.invoke(
+      {
+        messages: [new HumanMessage(userRequest)],
+      },
+      getConfig()
+    );
+
+    return {
+      messages: [
+        new ToolMessage({
+          tool_call_id: toolCall.id ?? toolCall.name,
+          name: delegateCatalogTool.name,
+          content: getLastAIMessageText(result.messages) || 'Catalog agent completed without a text response.',
+        }),
+      ],
+    };
+  };
+}
+
+export function createMainGraph({
+  checkpointer = graphCheckpointer,
+  name = 'Main Telegram Bot Graph',
+  progressReporter = telegramMainGraphProgressReporter,
+}: CreateMainGraphOptions = {}) {
+  return new StateGraph(MainGraphStateAnnotation)
+    .addNode('responseAgent', responseAgentNode)
+    .addNode('catalogAgent', createCatalogAgentNode(progressReporter))
+    .addEdge(START, 'responseAgent')
+    .addConditionalEdges('responseAgent', (state) => getMainRoute(state, progressReporter), {
+      catalogAgent: 'catalogAgent',
+      end: END,
+    })
+    .addEdge('catalogAgent', 'responseAgent')
+    .compile({
+      checkpointer,
+      name,
+      description: 'Main Telegram orchestration graph that delegates catalog work to the catalog-agent subgraph.',
+    });
+}
+
+export const mainGraph = createMainGraph();

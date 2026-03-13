@@ -62,14 +62,14 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
         case 'google':
           return new ChatGoogleGenerativeAI({
             apiKey: process.env.GOOGLE_API_KEY!,
-            modelName: process.env.GOOGLE_VISION_MODEL_NAME || 'gemini-1.5-pro',
+            model: process.env.GOOGLE_VISION_MODEL_NAME || 'gemini-1.5-pro',
             temperature,
             maxRetries: 2,
           });
         case 'groq':
           return new ChatGroq({
             apiKey: process.env.GROQ_API_KEY!,
-            modelName: process.env.GROQ_VISION_MODEL_NAME || 'llama-3.2-90b-vision-preview',
+            model: process.env.GROQ_VISION_MODEL_NAME || 'llama-3.2-90b-vision-preview',
             temperature,
             maxRetries: 2,
           });
@@ -86,14 +86,14 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
         case 'google':
           return new ChatGoogleGenerativeAI({
             apiKey: process.env.GOOGLE_API_KEY!,
-            modelName: process.env.GOOGLE_UTILITY_MODEL_NAME || 'gemini-1.5-flash',
+            model: process.env.GOOGLE_UTILITY_MODEL_NAME || 'gemini-1.5-flash',
             temperature,
             maxRetries: 2,
           });
         case 'groq':
           return new ChatGroq({
             apiKey: process.env.GROQ_API_KEY!,
-            modelName: process.env.GROQ_UTILITY_MODEL_NAME || 'llama-3.1-8b-instant',
+            model: process.env.GROQ_UTILITY_MODEL_NAME || 'llama-3.1-8b-instant',
             temperature,
             maxRetries: 2,
           });
@@ -113,7 +113,7 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
         case 'google':
           chatModel = new ChatGoogleGenerativeAI({
             apiKey: process.env.GOOGLE_API_KEY!,
-            modelName: process.env.GOOGLE_MODEL_NAME || 'gemini-1.5-pro',
+            model: process.env.GOOGLE_MODEL_NAME || 'gemini-1.5-pro',
             temperature,
             maxRetries: 2,
           });
@@ -121,7 +121,7 @@ function createChatModel(type: 'chat' | 'utility' | 'vision') {
         case 'groq':
           chatModel = new ChatGroq({
             apiKey: process.env.GROQ_API_KEY!,
-            modelName: process.env.GROQ_MODEL_NAME || 'gemma2-9b-it',
+            model: process.env.GROQ_MODEL_NAME || 'gemma2-9b-it',
             temperature,
             maxRetries: 2,
           });

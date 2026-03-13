@@ -4,3 +4,6 @@ dist
 .env.docker
 .windsurfrules
 redis-data-dev
+
+# LangGraph API
+.langgraph_api

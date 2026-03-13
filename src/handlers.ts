@@ -1,6 +1,8 @@
 import { HumanMessage, isAIMessage, trimMessages } from '@langchain/core/messages';
 import TelegramBot from 'node-telegram-bot-api';
 import { mainGraph } from './agents/main/graphs/main.graph';
+import { telegramMainGraphProgressReporter } from './agents/main/progress';
+import { createGraphRunConfig } from './agents/shared/checkpointing';
 import { CHAT_CONFIG, STICKER, createOpenAITokenCounter } from './config';
 import { AIService } from './services/ai';
 import { RedisService } from './services/redis';
@@ -49,7 +51,10 @@ export async function handleMessage(chatId: number, text: string) {
         summary: state.summary,
         memory: state.memory,
       },
-      { recursionLimit: 10 }
+      {
+        ...createGraphRunConfig(chatId),
+        recursionLimit: 20,
+      }
     );
 
     // Get the AI response from the result
@@ -83,6 +88,8 @@ export async function handleMessage(chatId: number, text: string) {
     }
 
     await TelegramService.sendMessage(chatId, 'Sorry, there was an error processing your message.');
+  } finally {
+    await telegramMainGraphProgressReporter.onRunComplete({ chatId });
   }
 }
 

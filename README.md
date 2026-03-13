@@ -8,6 +8,9 @@ Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and cloud AI m
 
 - Multiple AI model support (OpenAI, Google Gemini, Groq)
 - Native tool use for enhanced performance and reliability
+- Catalog orchestration with `main -> catalog-agent -> worker-agents`
+- WooCommerce catalog workers backed by an MCP server over HTTP
+- Build-time generated WooCommerce tool registry with worker-specific allowlists
 - Conversation context management
 - Automatic conversation summarization
 - Multiple Images input support
@@ -64,6 +67,7 @@ cp .env.docker.example .env.docker
 - Provider-specific API keys and model names
 - `OPENAI_BASE_URL` for OpenAI-compatible endpoints (optional)
 - Redis URL
+- WooCommerce MCP endpoint and token
 - (Optional) LangSmith credentials for monitoring
 
 ## Running Locally
@@ -79,6 +83,13 @@ bun dev
 ```
 
 For local development, `docker-compose.dev.yml` starts only Redis. The bot runs on your host via `bun dev`, so you keep hot reload and use cloud providers directly.
+
+If you use the WooCommerce catalog flow, make sure the WooCommerce MCP server is reachable from the app and that `.env` includes:
+
+```bash
+WOOCOMMERCE_MCP_BASE_URL=http://mag-service:3000/mcp/woocommerce-mcp
+WOOCOMMERCE_MCP_TOKEN=your_token
+```
 
 Production mode:
 
@@ -118,6 +129,8 @@ Cloud deployment:
 - `BRAVE_SEARCH_API_KEY`: Brave Search API key for internet searching
 - `OPENWEATHERMAP_API_KEY`: OpenWeatherMap API key for weather information
 - `REDIS_URL`: Redis connection URL
+- `WOOCOMMERCE_MCP_BASE_URL`: Full URL of the WooCommerce MCP endpoint
+- `WOOCOMMERCE_MCP_TOKEN`: Bearer token for the WooCommerce MCP endpoint
 
 ### Provider-Specific
 
@@ -143,6 +156,32 @@ Cloud deployment:
 - `LANGCHAIN_ENDPOINT`: LangSmith endpoint
 - `LANGCHAIN_API_KEY`: LangSmith API key
 - `LANGCHAIN_PROJECT`: LangSmith project name
+
+## Catalog Orchestration
+
+Catalog work is handled by a dedicated orchestration layer:
+
+- `main` delegates catalog-domain requests to `catalog-agent`
+- `catalog-agent` selects a playbook, optionally inspects full playbook instructions, and delegates to workers
+- workers are narrow specialists for categories, attributes, products, and variations
+- workers only see their own assigned tools and do not know about the MCP transport layer
+
+Canonical playbooks live in code in `src/agents/catalog/playbooks.ts`.
+
+## WooCommerce Tool Generation
+
+WooCommerce worker tools are generated from a committed `tools/list` snapshot:
+
+- snapshot source: `tools/woocommerce/woocommerce-tools.snapshot.json`
+- worker allowlists: `tools/woocommerce/woocommerce-worker-toolsets.json`
+- generated output: `src/generated/woocommerceTools.generated.ts`
+
+Regenerate after snapshot changes:
+
+```bash
+bun run generate:woocommerce-tools
+bun run typecheck
+```
 
 ## Message Queue System
 
@@ -184,6 +223,11 @@ Okos provides several tools that enhance the AI assistant's capabilities:
    - **Delete Reminder Tool** - Cancels specific reminders by ID
      - Allows users to remove reminders they no longer need
      - Validates that users can only delete their own reminders
+
+4. **WooCommerce Catalog Tools** - Worker-specific transport tools for catalog operations
+   - Categories, attributes, products, and variations are handled by separate worker agents
+   - Tool schemas come from the generated WooCommerce registry
+   - Runtime execution goes through the configured WooCommerce MCP endpoint
 
 ## Authentication System
 

@@ -10,17 +10,14 @@ export const responseAgentNode = async (
 
   const model = chatModel.bindTools(mainTools);
 
-  // Create base system prompt
-  let systemPrompt = PROMPTS.CHAT.SYSTEM();
+  let systemPrompt = PROMPTS.MAIN.SYSTEM();
 
   systemPrompt += `\n\n<additional-context>
 Chat ID: ${chatId}`;
-  // Add summary if available
   if (summary) {
     systemPrompt += `\n\nConversation Summary:\n${summary}`;
   }
 
-  // Add memory if available
   if (memory) {
     systemPrompt += `\n\nUser Information:\n${memory}`;
   }
