@@ -4,6 +4,7 @@ import { Annotation, BaseCheckpointSaver, START, StateGraph, getConfig } from '@
 import { z } from 'zod';
 import { classifierModel } from '../../config';
 import { PROMPTS } from '../../prompts';
+import { formatSystemLogMultilineValue, formatSystemLogValue, sendSystemLogFromCurrentRun } from '../../services/systemLog';
 import { getLastAIMessageText } from '../shared/messageUtils';
 import { type ToolRun } from '../shared/toolLoopGraph';
 import { getCatalogPlaybookIds, getCatalogPlaybookInstructions, renderPlaybookIndexForPrompt } from './playbooks';
@@ -26,7 +27,7 @@ export type WorkerRun = {
   toolRuns?: ToolRun[];
 };
 
-const MAX_PLANNER_ITERATIONS = 8;
+const MAX_PLANNER_ITERATIONS = 20;
 const workerHandoffDescription = 'This tool is a graph handoff. The surrounding graph routes it to the correct worker.';
 
 const delegateCategoryWorkerTool = tool(
@@ -235,6 +236,15 @@ async function executeWorkerHandoff(
   const context = typeof toolCall.args?.context === 'string' ? toolCall.args.context : undefined;
   const toolCallId = toolCall.id ?? toolCall.name;
 
+  await sendSystemLogFromCurrentRun({
+    lines: [
+      `catalog-agent -> ${workerName}`,
+      `task: ${formatSystemLogValue(task || '(empty)', 800)}`,
+      context ? `context:\n${formatSystemLogMultilineValue(context, 1000)}` : null,
+      `previousWorkerRuns: ${workerRuns.length}`,
+    ],
+  });
+
   if (!task) {
     const run: WorkerRun = {
       agent: workerName,
@@ -242,6 +252,14 @@ async function executeWorkerHandoff(
       task: '',
       details: 'Missing required "task" argument.',
     };
+
+    await sendSystemLogFromCurrentRun({
+      lines: [
+        `catalog-agent -> ${workerName}`,
+        'status: invalid',
+        'reason: missing required "task" argument',
+      ],
+    });
 
     return {
       run,
@@ -261,6 +279,14 @@ async function executeWorkerHandoff(
       task,
       details: 'Worker graph is not registered.',
     };
+
+    await sendSystemLogFromCurrentRun({
+      lines: [
+        `catalog-agent -> ${workerName}`,
+        'status: failed',
+        'reason: worker graph is not registered',
+      ],
+    });
 
     return {
       run,
@@ -299,6 +325,15 @@ async function executeWorkerHandoff(
       toolRuns: workerToolRuns,
     };
 
+    await sendSystemLogFromCurrentRun({
+      lines: [
+        `${workerName} -> catalog-agent`,
+        `status: ${runStatus}`,
+        `toolRuns: ${workerToolRuns.length}`,
+        `details:\n${formatSystemLogMultilineValue(details, 1200)}`,
+      ],
+    });
+
     return {
       run,
       toolMessage: new ToolMessage({
@@ -315,6 +350,14 @@ async function executeWorkerHandoff(
       task,
       details: message,
     };
+
+    await sendSystemLogFromCurrentRun({
+      lines: [
+        `${workerName} -> catalog-agent`,
+        'status: failed',
+        `error: ${formatSystemLogValue(message, 1000)}`,
+      ],
+    });
 
     return {
       run,
@@ -340,7 +383,22 @@ async function executeCatalogToolCall(
     const playbookId = typeof toolCall.args?.playbookId === 'string' ? toolCall.args.playbookId.trim() : '';
     const toolCallId = toolCall.id ?? toolCall.name;
 
+    await sendSystemLogFromCurrentRun({
+      lines: [
+        'catalog-agent -> inspect_catalog_playbook',
+        `playbookId: ${formatSystemLogValue(playbookId || '(empty)', 400)}`,
+      ],
+    });
+
     if (!playbookId) {
+      await sendSystemLogFromCurrentRun({
+        lines: [
+          'catalog-agent -> inspect_catalog_playbook',
+          'status: failed',
+          'reason: missing required "playbookId" argument',
+        ],
+      });
+
       return {
         toolMessage: new ToolMessage({
           tool_call_id: toolCallId,
@@ -351,6 +409,13 @@ async function executeCatalogToolCall(
     }
 
     const content = await inspectCatalogPlaybookTool.invoke({ playbookId });
+    await sendSystemLogFromCurrentRun({
+      lines: [
+        'inspect_catalog_playbook -> catalog-agent',
+        'status: completed',
+        `playbookId: ${formatSystemLogValue(playbookId, 400)}`,
+      ],
+    });
 
     return {
       toolMessage: new ToolMessage({
@@ -378,11 +443,30 @@ const catalogAgentNode = async (
   const systemMessage = new SystemMessage(PROMPTS.CATALOG_AGENT.SYSTEM(renderPlaybookIndexForPrompt()));
   const runnableModel = classifierModel.bindTools(catalogAgentTools);
 
+  await sendSystemLogFromCurrentRun({
+    lines: [
+      'catalog-agent started',
+      `input:\n${formatSystemLogMultilineValue(getLastAIMessageText(conversation) || conversation[conversation.length - 1]?.content, 1500)}`,
+    ],
+  });
+
   for (let iteration = 0; iteration < MAX_PLANNER_ITERATIONS; iteration += 1) {
     const response = await runnableModel.invoke([systemMessage, ...conversation]);
     conversation.push(response);
 
     const toolCalls = Array.isArray(response.tool_calls) ? response.tool_calls : [];
+    await sendSystemLogFromCurrentRun({
+      lines: [
+        `catalog-agent planner iteration ${iteration + 1}`,
+        `toolCalls: ${toolCalls.length}`,
+        toolCalls.length > 0
+          ? `calls: ${toolCalls
+              .map((toolCall) => `${toolCall.name}(${formatSystemLogValue(toolCall.args, 400)})`)
+              .join('; ')}`
+          : `response:\n${formatSystemLogMultilineValue(getLastAIMessageText([response]), 1000)}`,
+      ],
+    });
+
     if (toolCalls.length === 0) {
       return {
         messages: conversation.slice(state.messages.length),
@@ -405,6 +489,13 @@ const catalogAgentNode = async (
 
   const fallbackResponse = await runnableModel.invoke([systemMessage, ...conversation]);
   conversation.push(fallbackResponse);
+  await sendSystemLogFromCurrentRun({
+    lines: [
+      'catalog-agent planner limit reached',
+      `iterations: ${MAX_PLANNER_ITERATIONS}`,
+      `fallbackResponse:\n${formatSystemLogMultilineValue(getLastAIMessageText([fallbackResponse]), 1000)}`,
+    ],
+  });
 
   return {
     messages: conversation.slice(state.messages.length),

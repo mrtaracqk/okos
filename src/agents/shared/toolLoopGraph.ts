@@ -1,5 +1,6 @@
 import { BaseMessage, SystemMessage, ToolMessage, isAIMessage } from '@langchain/core/messages';
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
+import { formatSystemLogMultilineValue, formatSystemLogValue, sendSystemLogFromCurrentRun } from '../../services/systemLog';
 
 export type ToolRun = {
   toolName: string;
@@ -149,6 +150,14 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
           'catalog-worker',
           'tool_not_registered'
         );
+        await sendSystemLogFromCurrentRun({
+          lines: [
+            `worker-tool call failed`,
+            `tool: ${toolCall.name}`,
+            `args: ${formatSystemLogValue(args, 700)}`,
+            'error: tool is not registered in the worker loop',
+          ],
+        });
         toolRuns.push(normalizeToolRun(toolCall.name, args, payload));
         messages.push(
           new ToolMessage({
@@ -161,10 +170,26 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
       }
 
       const toolName = typeof tool.actualToolName === 'string' ? tool.actualToolName : toolCall.name;
+      await sendSystemLogFromCurrentRun({
+        lines: [
+          `worker -> ${toolName}`,
+          `toolCallId: ${toolCallId}`,
+          `args: ${formatSystemLogValue(args, 1000)}`,
+        ],
+      });
 
       try {
         const payload = await tool.invoke(args);
-        toolRuns.push(normalizeToolRun(toolName, args, payload));
+        const normalizedRun = normalizeToolRun(toolName, args, payload);
+        await sendSystemLogFromCurrentRun({
+          lines: [
+            `${toolName} -> worker`,
+            `status: ${normalizedRun.status}`,
+            normalizedRun.error ? `error: ${formatSystemLogValue(normalizedRun.error, 900)}` : null,
+            `result:\n${formatSystemLogMultilineValue(normalizedRun.text, 1200)}`,
+          ],
+        });
+        toolRuns.push(normalizedRun);
         messages.push(
           new ToolMessage({
             tool_call_id: toolCallId,
@@ -175,7 +200,15 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown worker tool execution error.';
         const payload = buildFailedToolPayload(toolName, message, 'catalog-worker', 'tool_execution_failed');
-        toolRuns.push(normalizeToolRun(toolName, args, payload));
+        const normalizedRun = normalizeToolRun(toolName, args, payload);
+        await sendSystemLogFromCurrentRun({
+          lines: [
+            `${toolName} -> worker`,
+            `status: ${normalizedRun.status}`,
+            `error: ${formatSystemLogValue(message, 1000)}`,
+          ],
+        });
+        toolRuns.push(normalizedRun);
         messages.push(
           new ToolMessage({
             tool_call_id: toolCallId,

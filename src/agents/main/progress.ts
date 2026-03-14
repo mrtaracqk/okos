@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { redisService, STICKER } from '../../config';
+import { STICKER } from '../../config';
 import TelegramService from '../../services/telegram';
 import { pickRandomElement } from '../../utils';
 
@@ -31,12 +31,7 @@ export const noopMainGraphProgressReporter: MainGraphProgressReporter = {
 };
 
 export const telegramMainGraphProgressReporter: MainGraphProgressReporter = {
-  async onCatalogDelegation({ chatId, statusText }) {
-    if (statusText) {
-      await redisService.saveAIMessage(chatId, statusText);
-      await TelegramService.sendMessage(chatId, statusText);
-    }
-
+  async onCatalogDelegation({ chatId, statusText: _statusText }) {
     await deletePendingActionMessage(chatId);
 
     let stickerMessage: TelegramBot.Message | undefined;

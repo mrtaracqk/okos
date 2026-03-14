@@ -3,6 +3,7 @@ import { Annotation, BaseCheckpointSaver, END, START, StateGraph, getConfig } fr
 import { catalogAgentGraph, type WorkerRun } from '../../catalog/catalog.agent';
 import { graphCheckpointer } from '../../shared/checkpointing';
 import { extractMessageText, getLastAIMessage, getLastAIMessageText } from '../../shared/messageUtils';
+import { formatSystemLogMultilineValue, sendSystemLog } from '../../../services/systemLog';
 import { telegramMainGraphProgressReporter, type MainGraphProgressReporter } from '../progress';
 import { responseAgentNode } from '../nodes/responseAgent.node';
 import { delegateCatalogTool } from '../tools/delegateCatalog.tool';
@@ -112,6 +113,15 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
 
     if (!userRequest) {
       const directResponse = 'Не удалось передать запрос в catalog-agent: отсутствует обязательный аргумент userRequest.';
+      await sendSystemLog(state.chatId, {
+        lines: [
+          'main-agent -> catalog-agent',
+          `tool: ${toolCall.name}`,
+          'status: failed',
+          'reason: missing required "userRequest" argument',
+        ],
+      });
+
       return {
         messages: [
           new ToolMessage({
@@ -134,6 +144,14 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
       chatId: state.chatId,
       statusText,
     });
+    await sendSystemLog(state.chatId, {
+      lines: [
+        'main-agent -> catalog-agent',
+        `tool: ${toolCall.name}`,
+        statusText ? `statusText: ${formatSystemLogMultilineValue(statusText, 500)}` : null,
+        `userRequest:\n${formatSystemLogMultilineValue(userRequest, 1500)}`,
+      ],
+    });
 
     const result = await catalogAgentGraph.invoke(
       {
@@ -146,6 +164,15 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
     const delegationResult = buildCatalogDelegationResult({
       rawText,
       workerRuns,
+    });
+    await sendSystemLog(state.chatId, {
+      lines: [
+        'catalog-agent -> main-agent',
+        `status: ${delegationResult.status}`,
+        delegationResult.failureWorker ? `failureWorker: ${delegationResult.failureWorker}` : null,
+        `workerRuns: ${workerRuns.length}`,
+        `response:\n${formatSystemLogMultilineValue(rawText, 1500)}`,
+      ],
     });
 
     const messages: BaseMessage[] = [

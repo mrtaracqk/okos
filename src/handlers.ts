@@ -37,7 +37,7 @@ export async function handleMessage(chatId: number, text: string) {
       },
       {
         ...createGraphRunConfig(chatId),
-        recursionLimit: 20,
+        recursionLimit: 100,
       }
     );
 
