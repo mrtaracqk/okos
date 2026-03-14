@@ -2,7 +2,7 @@
 
 [![Build](https://github.com/johnnybui/okos/actions/workflows/build.yml/badge.svg)](https://github.com/johnnybui/okos/actions/workflows/build.yml)
 
-Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and cloud AI model providers. It maintains conversation context and provides summaries of interactions. Version 2 (current) uses native tool capabilities of modern LLMs for enhanced performance.
+Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and cloud AI model providers. It maintains conversation context and user memory. Version 2 (current) uses native tool capabilities of modern LLMs for enhanced performance.
 
 ## Features
 
@@ -12,11 +12,7 @@ Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and cloud AI m
 - WooCommerce catalog workers backed by an MCP server over HTTP
 - Build-time generated WooCommerce tool registry with worker-specific allowlists
 - Conversation context management
-- Automatic conversation summarization
 - Multiple Images input support
-- Internet searching
-- Weather information retrieval (current conditions and 5-day forecasts)
-- Complete reminder system with tools to set, list, and delete notifications at specified times
 - Message queuing system with BullMQ to prevent overlapping workflows
 - Redis for state persistence and job queuing
 - User authentication system with token-based access control
@@ -127,10 +123,6 @@ Cloud deployment:
 - `OKOS_TOKEN`: Access token for user authentication
 - `OKOS_ADMIN_USERNAME`: Telegram username of the admin user
 - `MODEL_PROVIDER`: AI model provider ('openai', 'google', or 'groq')
-- `SEARCH_PROVIDER`: Search provider ('tavily' or 'brave')
-- `TAVILY_API_KEY`: Tavily API key for internet searching
-- `BRAVE_SEARCH_API_KEY`: Brave Search API key for internet searching
-- `OPENWEATHERMAP_API_KEY`: OpenWeatherMap API key for weather information
 - `REDIS_URL`: Redis connection URL
 - `WOOCOMMERCE_MCP_BASE_URL`: Full URL of the WooCommerce MCP endpoint
 - `WOOCOMMERCE_MCP_TOKEN`: Optional bearer token for the WooCommerce MCP endpoint
@@ -189,46 +181,22 @@ bun run typecheck
 
 ## Message Queue System
 
-Okos uses BullMQ to implement robust message processing and reminder systems that ensure:
+Okos uses BullMQ to implement robust message processing that ensures:
 
 - Messages from the same user are processed sequentially
 - Multiple users can be served concurrently
 - The system can handle high loads without crashing
 - Failed jobs are properly retried and logged
-- Reminders are scheduled and delivered at the specified times
 
-The system implements two specialized queues:
+The system implements one specialized queue:
 
 1. **Message Queue** - Handles incoming user messages and ensures sequential processing
-2. **Reminder Queue** - Manages scheduled reminders with precise timing using BullMQ's delayed job feature
 
 Detailed documentation about the queue system is available in the [Queue System Documentation](./docs/queue-system.md).
 
 ## Available Tools
 
-Okos provides several tools that enhance the AI assistant's capabilities:
-
-1. **Search Tool** - Allows the bot to search the internet for up-to-date information
-   - Uses Tavily or Brave Search API to find relevant information
-   - Helps answer questions about current events, facts, and general knowledge
-
-2. **Weather Tool** - Provides weather information for any location
-   - Retrieves current weather conditions including temperature, humidity, and wind speed
-   - Can provide 5-day forecasts when requested
-   - Uses OpenWeatherMap API
-
-3. **Reminder System** - Complete reminder management with multiple tools:
-   - **Set Reminder Tool** - Creates reminders that will notify the user at specified times
-     - Supports both relative time ("in 30 minutes") and absolute time ("at 4:30 PM")
-     - Uses BullMQ's delayed job feature for precise timing
-   - **Get Reminders Tool** - Lists all pending reminders for the user
-     - Shows reminder ID, message content, and scheduled time
-     - Helps users track and manage their reminders
-   - **Delete Reminder Tool** - Cancels specific reminders by ID
-     - Allows users to remove reminders they no longer need
-     - Validates that users can only delete their own reminders
-
-4. **WooCommerce Catalog Tools** - Worker-specific transport tools for catalog operations
+Okos provides WooCommerce catalog tools for catalog operations:
    - Categories, attributes, products, and variations are handled by separate worker agents
    - Tool schemas come from the generated WooCommerce registry
    - Runtime execution goes through the configured WooCommerce MCP endpoint
@@ -266,7 +234,7 @@ Okos uses three different model configurations for specialized tasks:
 
 2. **Utility Model** - For internal utility tasks
 
-   - Used for summarization, memory management, etc.
+   - Used for memory management and other lightweight internal tasks
    - Can be smaller/cheaper models as they don't require tool use
 
 3. **Vision Model** - For processing image inputs

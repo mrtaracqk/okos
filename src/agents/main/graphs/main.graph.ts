@@ -21,8 +21,6 @@ export const MainGraphStateAnnotation = Annotation.Root({
     reducer: (oldMessages, newMessages) => [...oldMessages, ...newMessages],
   }),
   chatId: Annotation<number>(),
-  summary: Annotation<string>(),
-  memory: Annotation<string>(),
   catalogDelegation: Annotation<CatalogDelegationResult | null>({
     reducer: (_oldValue, newValue) => newValue,
     default: () => null,
@@ -43,7 +41,6 @@ const getMainRoute = async (state: typeof MainGraphStateAnnotation.State, progre
     return 'catalogAgent';
   }
 
-  await progressReporter.onRunComplete({ chatId: state.chatId });
   return 'end';
 };
 
@@ -182,15 +179,20 @@ export function createMainGraph({
   return new StateGraph(MainGraphStateAnnotation)
     .addNode('responseAgent', responseAgentNode)
     .addNode('catalogAgent', createCatalogAgentNode(progressReporter))
+    .addNode('end', async (state) => {
+      await progressReporter.onRunComplete({ chatId: state.chatId });
+      return {};
+    })
     .addEdge(START, 'responseAgent')
     .addConditionalEdges('responseAgent', (state) => getMainRoute(state, progressReporter), {
       catalogAgent: 'catalogAgent',
-      end: END,
+      end: 'end',
     })
     .addConditionalEdges('catalogAgent', getPostCatalogRoute, {
       responseAgent: 'responseAgent',
-      end: END,
+      end: 'end',
     })
+    .addEdge('end', END)
     .compile({
       checkpointer,
       name,

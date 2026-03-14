@@ -1,7 +1,6 @@
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { ChatGroq } from '@langchain/groq';
 import { ChatOpenAI } from '@langchain/openai';
-import Groq from 'groq-sdk';
 import { RedisService } from './services/redis';
 
 export const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -15,7 +14,6 @@ export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 type ModelProvider = 'google' | 'groq' | 'openai';
 export const MODEL_PROVIDER = (process.env.MODEL_PROVIDER || 'openai') as ModelProvider;
-export const MODEL_VISION_PROVIDER = (process.env.MODEL_VISION_PROVIDER || MODEL_PROVIDER) as ModelProvider;
 export const MODEL_UTILITY_PROVIDER = (process.env.MODEL_UTILITY_PROVIDER || MODEL_PROVIDER) as ModelProvider;
 export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL?.trim() || undefined;
 
@@ -50,109 +48,51 @@ export function createOpenAITokenCounter(modelName = 'gpt-4o') {
   });
 }
 
-function createChatModel(type: 'chat' | 'utility' | 'vision') {
+function createChatModel(type: 'chat' | 'utility') {
   const temperature = type === 'chat' ? 0.5 : 0;
+  const provider = type === 'utility' ? MODEL_UTILITY_PROVIDER || MODEL_PROVIDER : MODEL_PROVIDER;
+  let chatModel: ChatOpenAI | ChatGoogleGenerativeAI | ChatGroq;
 
-  switch (type) {
-    case 'vision': {
-      const provider = MODEL_VISION_PROVIDER || MODEL_PROVIDER;
-      switch (provider) {
-        case 'openai':
-          return createOpenAIModel(process.env.OPENAI_VISION_MODEL_NAME || 'gpt-4o', temperature);
-        case 'google':
-          return new ChatGoogleGenerativeAI({
-            apiKey: process.env.GOOGLE_API_KEY!,
-            model: process.env.GOOGLE_VISION_MODEL_NAME || 'gemini-1.5-pro',
-            temperature,
-            maxRetries: 2,
-          });
-        case 'groq':
-          return new ChatGroq({
-            apiKey: process.env.GROQ_API_KEY!,
-            model: process.env.GROQ_VISION_MODEL_NAME || 'llama-3.2-90b-vision-preview',
-            temperature,
-            maxRetries: 2,
-          });
-        default:
-          return createOpenAIModel(process.env.OPENAI_VISION_MODEL_NAME || 'gpt-4o', temperature);
-      }
-    }
-
-    case 'utility': {
-      const provider = MODEL_UTILITY_PROVIDER || MODEL_PROVIDER;
-      switch (provider) {
-        case 'openai':
-          return createOpenAIModel(process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini', temperature);
-        case 'google':
-          return new ChatGoogleGenerativeAI({
-            apiKey: process.env.GOOGLE_API_KEY!,
-            model: process.env.GOOGLE_UTILITY_MODEL_NAME || 'gemini-1.5-flash',
-            temperature,
-            maxRetries: 2,
-          });
-        case 'groq':
-          return new ChatGroq({
-            apiKey: process.env.GROQ_API_KEY!,
-            model: process.env.GROQ_UTILITY_MODEL_NAME || 'llama-3.1-8b-instant',
-            temperature,
-            maxRetries: 2,
-          });
-        default:
-          return createOpenAIModel(process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini', temperature);
-      }
-    }
-
-    case 'chat':
-    default: {
-      let chatModel: ChatOpenAI | ChatGoogleGenerativeAI | ChatGroq;
-
-      switch (MODEL_PROVIDER) {
-        case 'openai':
-          chatModel = createOpenAIModel(process.env.OPENAI_MODEL_NAME || 'gpt-4o', temperature);
-          break;
-        case 'google':
-          chatModel = new ChatGoogleGenerativeAI({
-            apiKey: process.env.GOOGLE_API_KEY!,
-            model: process.env.GOOGLE_MODEL_NAME || 'gemini-1.5-pro',
-            temperature,
-            maxRetries: 2,
-          });
-          break;
-        case 'groq':
-          chatModel = new ChatGroq({
-            apiKey: process.env.GROQ_API_KEY!,
-            model: process.env.GROQ_MODEL_NAME || 'gemma2-9b-it',
-            temperature,
-            maxRetries: 2,
-          });
-          break;
-        default:
-          chatModel = createOpenAIModel(process.env.OPENAI_MODEL_NAME || 'gpt-4o', temperature);
-          break;
-      }
-
-      return chatModel;
-    }
+  switch (provider) {
+    case 'openai':
+      chatModel = createOpenAIModel(
+        type === 'chat' ? process.env.OPENAI_MODEL_NAME || 'gpt-4o' : process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
+        temperature
+      );
+      break;
+    case 'google':
+      chatModel = new ChatGoogleGenerativeAI({
+        apiKey: process.env.GOOGLE_API_KEY!,
+        model: type === 'chat' ? process.env.GOOGLE_MODEL_NAME || 'gemini-1.5-pro' : process.env.GOOGLE_UTILITY_MODEL_NAME || 'gemini-1.5-flash',
+        temperature,
+        maxRetries: 2,
+      });
+      break;
+    case 'groq':
+      chatModel = new ChatGroq({
+        apiKey: process.env.GROQ_API_KEY!,
+        model: type === 'chat' ? process.env.GROQ_MODEL_NAME || 'gemma2-9b-it' : process.env.GROQ_UTILITY_MODEL_NAME || 'llama-3.1-8b-instant',
+        temperature,
+        maxRetries: 2,
+      });
+      break;
+    default:
+      chatModel = createOpenAIModel(
+        type === 'chat' ? process.env.OPENAI_MODEL_NAME || 'gpt-4o' : process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
+        temperature
+      );
+      break;
   }
+
+  return chatModel;
 }
 
 export const chatModel = createChatModel('chat');
 export const classifierModel = createChatModel('utility');
-export const summarizeModel = createChatModel('utility');
-export const visionModel = createChatModel('vision');
-
-export const nativeGroqClient = new Groq({
-  apiKey: process.env.GROQ_API_KEY!,
-  maxRetries: 2,
-});
 
 export const CHAT_CONFIG = {
-  minMessagesBeforeSummary: 6, // Number of messages before triggering summary
   messagesToKeep: 20, // Number of recent messages to keep in context
-  summarizeEveryNPairOfMessages: 3, // Run summarize & memorize agent every 5 messages
   messageCooldownSeconds: 3,
-  photoCooldownSeconds: 10,
-  maxPhotosInMessage: 5,
 } as const;
 
 export const QUEUE_CONFIG = {

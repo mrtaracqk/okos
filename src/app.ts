@@ -2,10 +2,9 @@ import { html } from '@elysiajs/html';
 import { Elysia } from 'elysia';
 import TelegramBot from 'node-telegram-bot-api';
 import { runWithTelegramRequestContext, type TelegramRequestContext } from './approval/requestContext';
-import { handleClearHistory, handleMessage, handlePhoto } from './handlers';
+import { handleClearHistory, handleMessage } from './handlers';
 import MessageQueueService, { MessagePayload } from './services/messageQueue';
 import { RedisService } from './services/redis';
-import { ReminderQueueService } from './services/reminderQueue';
 import TelegramService from './services/telegram';
 import { handleTelegramApprovalCallback } from './services/toolApproval';
 import { validateWooCommerceTransportOnStartup } from './services/woocommerceTransport';
@@ -33,7 +32,6 @@ void bootstrapCatalogTransport()
 
 // Initialize services
 const queueService = MessageQueueService.getInstance();
-const reminderQueueService = ReminderQueueService.getInstance(); // Initialize reminder queue service
 const redisService = new RedisService();
 
 function buildTelegramRequestContext(input: {
@@ -88,12 +86,9 @@ queueService.registerMessageProcessor(async (payload: MessagePayload) => {
   try {
     await runWithTelegramRequestContext(context, async () => {
       if (type === 'text') {
-        await handleMessage(chatId, content as string);
-      } else if (type === 'photo') {
-        const photoContent = content as { photos: any[]; caption?: string };
-        await handlePhoto(chatId, photoContent.photos, photoContent.caption);
+        await handleMessage(chatId, content);
       } else if (type === 'sticker') {
-        await handleMessage(chatId, content as string);
+        await handleMessage(chatId, content);
       }
     });
   } catch (error) {
@@ -143,7 +138,7 @@ new Elysia()
 bot
   .setMyCommands([
     { command: 'clear_messages', description: 'Clear your chat history' },
-    { command: 'clear_all', description: 'Clear your chat history and memory' },
+    { command: 'clear_all', description: 'Clear your chat history' },
     { command: 'list_users', description: 'List all authorized users (admin only)' },
     { command: 'remove_user', description: 'Remove a user from authorized list (admin only)' },
   ])
@@ -215,21 +210,10 @@ bot.on('text', async (msg) => {
   });
 });
 
-// Store photos by media group ID
-const mediaGroups = new Map<string, { photos: TelegramBot.PhotoSize[]; caption?: string }>();
-
 bot.on('photo', async (msg) => {
   const chatId = msg.chat.id;
   const username = msg.from?.username;
-  const photos = msg.photo;
   const caption = msg.caption;
-  const mediaGroupId = msg.media_group_id;
-  const requestContext = buildTelegramRequestContext({
-    chatId,
-    from: msg.from,
-  });
-
-  if (!photos) return;
 
   // Check if user is authorized
   const isAuthorized = await authGuard(username, chatId, caption);
@@ -237,52 +221,7 @@ bot.on('photo', async (msg) => {
     return;
   }
 
-  if (!requestContext) {
-    await bot.sendMessage(chatId, 'Unable to process this message because the Telegram runtime context is missing.');
-    return;
-  }
-
-  const photo = photos[2] || photos[1] || photos[0]; // Get the photo with from medium resolution (index 2)
-
-  if (!mediaGroupId) {
-    // Single photo - add to queue
-    await queueService.addMessage({
-      chatId,
-      type: 'photo',
-      content: {
-        photos: [photo],
-        caption,
-      },
-      context: requestContext,
-    });
-    return;
-  }
-
-  // Multiple photos - collect them first
-  if (!mediaGroups.has(mediaGroupId)) {
-    mediaGroups.set(mediaGroupId, { photos: [], caption });
-  }
-
-  const group = mediaGroups.get(mediaGroupId)!;
-  group.photos.push(photo);
-
-  // Process after a short delay to ensure we have all photos
-  setTimeout(async () => {
-    const group = mediaGroups.get(mediaGroupId);
-    if (group) {
-      // Add to queue instead of processing immediately
-      await queueService.addMessage({
-        chatId,
-        type: 'photo',
-        content: {
-          photos: group.photos,
-          caption: group.caption,
-        },
-        context: requestContext,
-      });
-      mediaGroups.delete(mediaGroupId);
-    }
-  }, 1000); // Wait 1 second to collect all photos
+  await bot.sendMessage(chatId, 'Image messages are no longer supported. Please send a text request.');
 });
 
 bot.on('sticker', async (msg) => {
@@ -351,12 +290,12 @@ bot.on('error', (error) => {
 // Handle process termination
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, closing queues...');
-  await Promise.all([queueService.close(), reminderQueueService.close()]);
+  await queueService.close();
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   console.log('SIGINT received, closing queues...');
-  await Promise.all([queueService.close(), reminderQueueService.close()]);
+  await queueService.close();
   process.exit(0);
 });

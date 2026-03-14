@@ -11,12 +11,10 @@ Okos is a Telegram AI assistant built on Bun + TypeScript. The important part fo
 - `src/agents/catalog/playbooks.ts`: canonical catalog playbook index and full playbook instructions stored in code.
 - `src/agents/catalog/tools/generatedTransportTools.ts`: worker tool factories built from the generated WooCommerce registry.
 - `src/generated/woocommerceTools.generated.ts`: generated WooCommerce tool registry plus worker allowlists from the committed snapshot.
-- `src/agents/main/nodes/*`: response, summary, and memory nodes.
-- `src/agents/main/tools/*`: search, weather, and reminder tools.
+- `src/agents/main/nodes/*`: response and memory nodes.
 - `src/services/woocommerceTransport.ts`: runtime WooCommerce MCP client using the SDK over HTTP.
-- `src/services/redis.ts`: persisted chat messages, summary, memory, and authorized users.
+- `src/services/redis.ts`: persisted chat messages, memory, and authorized users.
 - `src/services/messageQueue.ts`: per-chat BullMQ queues; preserves sequential handling per user.
-- `src/services/reminderQueue.ts`: global delayed reminder queue.
 - `src/config.ts`: provider selection, model instances, queue/chat limits, env-driven defaults.
 - `src/mcpServers.ts`: MCP server registry and env-driven WooCommerce endpoint configuration.
 - `tools/woocommerce/woocommerce-tools.snapshot.json`: committed `tools/list` snapshot used for generation.
@@ -36,8 +34,7 @@ Okos is a Telegram AI assistant built on Bun + TypeScript. The important part fo
 
 ## Change Guidance
 - For Telegram delivery behavior, inspect both `src/app.ts` and `src/services/telegram.ts`.
-- For memory/summary bugs, inspect `src/handlers.ts`, `src/services/redis.ts`, and `src/agents/main/nodes/*` together.
-- For reminder work, keep tool schema, BullMQ payload, and user-facing time formatting in sync.
+- For memory bugs, inspect `src/handlers.ts`, `src/services/redis.ts`, and `src/agents/main/nodes/*` together.
 - For provider-specific changes, check `src/config.ts` and `src/services/ai.ts` together; vision support differs by provider.
 - For catalog orchestration changes, inspect `src/agents/catalog/catalog.agent.ts`, `src/agents/catalog/playbooks.ts`, and the relevant worker file together.
 - For WooCommerce transport issues, inspect `src/services/woocommerceTransport.ts`, `src/mcpServers.ts`, `tools/woocommerce/woocommerce-tools.snapshot.json`, and `src/generated/woocommerceTools.generated.ts` together.

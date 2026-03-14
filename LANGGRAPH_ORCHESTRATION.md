@@ -72,7 +72,7 @@ Telegram update
 Что делает:
 
 - собирает system prompt главного агента;
-- добавляет `chatId`, `summary`, `memory`;
+- добавляет `chatId`, `memory`;
 - решает: ответить самому или делегировать в `catalog-agent`.
 
 Для этого он умеет вызвать только один tool:

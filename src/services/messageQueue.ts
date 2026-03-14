@@ -6,14 +6,9 @@ import { RedisService } from './redis';
 // Message types
 export type MessagePayload = {
   chatId: number;
-  type: 'text' | 'photo' | 'sticker';
-  content: string | PhotoContent;
+  type: 'text' | 'sticker';
+  content: string;
   context: TelegramRequestContext;
-};
-
-export type PhotoContent = {
-  photos: any[];
-  caption?: string;
 };
 
 // Singleton Queue Service
