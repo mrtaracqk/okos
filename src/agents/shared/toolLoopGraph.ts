@@ -1,6 +1,6 @@
 import { BaseMessage, SystemMessage, ToolMessage, isAIMessage } from '@langchain/core/messages';
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
-import { formatSystemLogMultilineValue, formatSystemLogValue, sendSystemLogFromCurrentRun } from '../../services/systemLog';
+import { buildTraceAttributes, formatTraceText, formatTraceValue, runAgentSpan, runToolSpan } from '../../observability/traceContext';
 
 export type ToolRun = {
   toolName: string;
@@ -47,16 +47,78 @@ function normalizeArgs(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
 }
 
+function safeSerialize(value: unknown): string | null {
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === 'string' ? serialized : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeToolContentValue(value: unknown): string | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+
+  if (value.length !== 1) {
+    return safeSerialize(value);
+  }
+
+  const [item] = value;
+  if (!isRecord(item) || typeof item.type !== 'string') {
+    return safeSerialize(value);
+  }
+
+  if (item.type === 'text' && typeof item.text === 'string') {
+    return item.text.trim();
+  }
+
+  if (item.type === 'resource' && isRecord(item.resource)) {
+    return safeSerialize(item.resource);
+  }
+
+  if (
+    item.type === 'resource_link' &&
+    typeof item.name === 'string' &&
+    typeof item.uri === 'string'
+  ) {
+    return `${item.name}: ${item.uri}`.trim();
+  }
+
+  return safeSerialize(value);
+}
+
+function dedupeToolPayload(value: Record<string, unknown>): Record<string, unknown> {
+  const payload = { ...value };
+  const text = typeof payload.text === 'string' ? payload.text.trim() : '';
+  const structuredValue =
+    payload.structured !== undefined ? safeSerialize(payload.structured) : null;
+  const contentValue = normalizeToolContentValue(payload.content);
+
+  if (text.length > 0 && structuredValue === text) {
+    delete payload.structured;
+  }
+
+  if (
+    (text.length > 0 && contentValue === text) ||
+    ((text.length === 0 || !('text' in payload)) &&
+      structuredValue !== null &&
+      contentValue === structuredValue)
+  ) {
+    delete payload.content;
+  }
+
+  return payload;
+}
+
 function serializeToolPayload(value: unknown): string {
   if (typeof value === 'string') {
     return value;
   }
 
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+  const serializableValue = isRecord(value) ? dedupeToolPayload(value) : value;
+  return safeSerialize(serializableValue) ?? String(serializableValue);
 }
 
 function normalizeToolRun(toolName: string, args: Record<string, unknown>, payload: unknown): ToolRun {
@@ -119,11 +181,21 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
   const toolsByName = new Map<string, WorkerTool>(tools.map((tool) => [tool.name, tool]));
 
   const agentNode = async (state: typeof ToolLoopStateAnnotation.State) => {
-    const response = await model.bindTools(tools).invoke([new SystemMessage(systemPrompt()), ...state.messages]);
+    return runAgentSpan(
+      'worker.tool_loop.agent',
+      async () => {
+        const response = await model.bindTools(tools).invoke([new SystemMessage(systemPrompt()), ...state.messages]);
 
-    return {
-      messages: [response],
-    };
+        return {
+          messages: [response],
+        };
+      },
+      {
+        attributes: buildTraceAttributes({
+          'worker.message_count': state.messages.length,
+        }),
+      }
+    );
   };
 
   const toolsNode = async (state: typeof ToolLoopStateAnnotation.State) => {
@@ -144,21 +216,27 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
       const args = normalizeArgs(toolCall.args);
 
       if (!tool) {
-        const payload = buildFailedToolPayload(
-          toolCall.name,
-          `Tool "${toolCall.name}" is not registered in the worker loop.`,
-          'catalog-worker',
-          'tool_not_registered'
+        const payload = await runToolSpan(
+          'worker.tool_call',
+          async () =>
+            buildFailedToolPayload(
+              toolCall.name,
+              `Tool "${toolCall.name}" is not registered in the worker loop.`,
+              'catalog-worker',
+              'tool_not_registered'
+            ),
+          {
+            attributes: buildTraceAttributes({
+              'tool.name': toolCall.name,
+              'tool.call_id': toolCallId,
+              'tool.args': formatTraceValue(args, 1000),
+              'tool.status': 'failed',
+            }),
+            statusMessage: () => `tool "${toolCall.name}" is not registered in the worker loop`,
+          }
         );
-        await sendSystemLogFromCurrentRun({
-          lines: [
-            `worker-tool call failed`,
-            `tool: ${toolCall.name}`,
-            `args: ${formatSystemLogValue(args, 700)}`,
-            'error: tool is not registered in the worker loop',
-          ],
-        });
-        toolRuns.push(normalizeToolRun(toolCall.name, args, payload));
+        const normalizedRun = normalizeToolRun(toolCall.name, args, payload);
+        toolRuns.push(normalizedRun);
         messages.push(
           new ToolMessage({
             tool_call_id: toolCallId,
@@ -170,25 +248,34 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
       }
 
       const toolName = typeof tool.actualToolName === 'string' ? tool.actualToolName : toolCall.name;
-      await sendSystemLogFromCurrentRun({
-        lines: [
-          `worker -> ${toolName}`,
-          `toolCallId: ${toolCallId}`,
-          `args: ${formatSystemLogValue(args, 1000)}`,
-        ],
-      });
 
       try {
-        const payload = await tool.invoke(args);
+        const payload = await runToolSpan(
+          'worker.tool_call',
+          async () => tool.invoke(args),
+          {
+            attributes: buildTraceAttributes({
+              'tool.name': toolName,
+              'tool.call_id': toolCallId,
+              'tool.args': formatTraceValue(args, 1000),
+            }),
+            mapResultAttributes: (result) => {
+              const normalizedRun = normalizeToolRun(toolName, args, result);
+              return buildTraceAttributes({
+                'tool.status': normalizedRun.status,
+                'error.type': normalizedRun.error?.type,
+                'error.code': normalizedRun.error?.code,
+                'error.retryable': normalizedRun.error?.retryable,
+                'output.value': formatTraceText(normalizedRun.text, 1200),
+              });
+            },
+            statusMessage: (result) => {
+              const normalizedRun = normalizeToolRun(toolName, args, result);
+              return normalizedRun.status === 'failed' ? normalizedRun.error?.message ?? normalizedRun.text : undefined;
+            },
+          }
+        );
         const normalizedRun = normalizeToolRun(toolName, args, payload);
-        await sendSystemLogFromCurrentRun({
-          lines: [
-            `${toolName} -> worker`,
-            `status: ${normalizedRun.status}`,
-            normalizedRun.error ? `error: ${formatSystemLogValue(normalizedRun.error, 900)}` : null,
-            `result:\n${formatSystemLogMultilineValue(normalizedRun.text, 1200)}`,
-          ],
-        });
         toolRuns.push(normalizedRun);
         messages.push(
           new ToolMessage({
@@ -201,13 +288,6 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
         const message = error instanceof Error ? error.message : 'Unknown worker tool execution error.';
         const payload = buildFailedToolPayload(toolName, message, 'catalog-worker', 'tool_execution_failed');
         const normalizedRun = normalizeToolRun(toolName, args, payload);
-        await sendSystemLogFromCurrentRun({
-          lines: [
-            `${toolName} -> worker`,
-            `status: ${normalizedRun.status}`,
-            `error: ${formatSystemLogValue(message, 1000)}`,
-          ],
-        });
         toolRuns.push(normalizedRun);
         messages.push(
           new ToolMessage({

@@ -11,6 +11,7 @@ Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and cloud AI m
 - Catalog orchestration with `main -> catalog-agent -> worker-agents`
 - WooCommerce catalog workers backed by an MCP server over HTTP
 - Build-time generated WooCommerce tool registry with worker-specific allowlists
+- Phoenix tracing for runtime inspection of assistant turns and agent orchestration
 - Conversation context management
 - Multiple Images input support
 - Message queuing system with BullMQ to prevent overlapping workflows
@@ -64,6 +65,7 @@ cp .env.docker.example .env.docker
 - `OPENAI_BASE_URL` for OpenAI-compatible endpoints (optional)
 - Redis URL
 - WooCommerce MCP endpoint and token
+- Phoenix tracing endpoint
 - (Optional) LangSmith credentials for monitoring
 
 ## Running Locally
@@ -89,6 +91,18 @@ WOOCOMMERCE_MCP_TOKEN=your_token
 ```
 
 Mutating WooCommerce actions are guarded by a runtime Telegram approval step. By default the assistant waits up to 5 minutes for approval before failing the action. Override this with `WOOCOMMERCE_APPROVAL_TIMEOUT_MS` if needed.
+
+If you want runtime traces in Phoenix, also set:
+
+```bash
+PHOENIX_ENABLED=true
+PHOENIX_PROJECT_NAME=op-bot-local
+PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006
+```
+
+In the local Docker stack the collector is available as `http://phoenix:6006` from inside the `op-assistant` container, and the Phoenix UI is exposed on `http://127.0.0.1:6006`.
+
+Because `op-assistant` runs on Bun, LangChain auto-instrumentation is currently skipped there. Phoenix still receives the manual runtime spans emitted by the app (`assistant.turn`, catalog/worker spans, WooCommerce transport spans).
 
 Production mode:
 
@@ -151,6 +165,9 @@ Cloud deployment:
 - `LANGCHAIN_ENDPOINT`: LangSmith endpoint
 - `LANGCHAIN_API_KEY`: LangSmith API key
 - `LANGCHAIN_PROJECT`: LangSmith project name
+- `PHOENIX_ENABLED`: Enable Phoenix/OpenTelemetry tracing for runtime graph execution
+- `PHOENIX_PROJECT_NAME`: Phoenix project name shown in the UI
+- `PHOENIX_COLLECTOR_ENDPOINT`: Base Phoenix collector URL, for local stack use `http://phoenix:6006`
 - `WOOCOMMERCE_APPROVAL_TIMEOUT_MS`: Runtime approval timeout in milliseconds for mutating WooCommerce actions (default: `300000`)
 
 ## Catalog Orchestration
@@ -163,6 +180,18 @@ Catalog work is handled by a dedicated orchestration layer:
 - workers only see their own assigned tools and do not know about the MCP transport layer
 
 Canonical playbooks live in code in `src/agents/catalog/playbooks.ts`.
+
+## Runtime Tracing
+
+Phoenix is the primary runtime tracing backend for `op-assistant`.
+
+- One Telegram user turn maps to root span `assistant.turn`
+- Main orchestration is traced through spans like `main_graph.invoke`, `main_graph.response_agent`, and `main_graph.catalog_agent_handoff`
+- Catalog planning and worker execution are traced through `catalog_agent.invoke`, `catalog_agent.planner_iteration`, `catalog_agent.worker_handoff`, `worker.tool_loop.agent`, and `worker.tool_call`
+- WooCommerce transport calls are traced via `woocommerce_transport.call_tool`
+
+Technical execution logs are no longer sent back to Telegram as `SYSTEM LOG`. For debugging orchestration, inspect Phoenix first.
+On Bun, these traces currently come from the app's manual spans; LangChain auto-instrumentation is not enabled there.
 
 ## WooCommerce Tool Generation
 

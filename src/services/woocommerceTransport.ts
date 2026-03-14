@@ -6,6 +6,7 @@ import {
 } from '../generated/woocommerceTools.generated';
 import { isApprovalGateError } from '../approval/core';
 import { MCP_SERVERS, shouldValidateWooCommerceMcpOnStartup } from '../mcpServers';
+import { buildTraceAttributes, formatTraceText, formatTraceValue, runToolSpan } from '../observability/traceContext';
 import { runWooCommerceToolWithApproval } from './toolApproval';
 
 type ToolResultContent =
@@ -239,28 +240,49 @@ export class WooCommerceTransportService {
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<NormalizedToolResult> {
-    try {
-      return await runWooCommerceToolWithApproval({
-        actionName: name,
-        args,
-        execute: () => this.callToolRaw(name, args),
-      });
-    } catch (error) {
-      if (isApprovalGateError(error)) {
-        return normalizeToolFailure(name, {
-          text: error.message,
-          structured: {
-            error: {
-              type: error.type,
-              message: error.message,
-            },
-          },
-          fallbackSource: 'approval-gate',
-        });
-      }
+    return runToolSpan(
+      'woocommerce_transport.call_tool',
+      async () => {
+        try {
+          return await runWooCommerceToolWithApproval({
+            actionName: name,
+            args,
+            execute: () => this.callToolRaw(name, args),
+          });
+        } catch (error) {
+          if (isApprovalGateError(error)) {
+            return normalizeToolFailure(name, {
+              text: error.message,
+              structured: {
+                error: {
+                  type: error.type,
+                  message: error.message,
+                },
+              },
+              fallbackSource: 'approval-gate',
+            });
+          }
 
-      throw error;
-    }
+          throw error;
+        }
+      },
+      {
+        attributes: buildTraceAttributes({
+          'tool.name': name,
+          'tool.args': formatTraceValue(args, 1200),
+        }),
+        mapResultAttributes: (result) =>
+          buildTraceAttributes({
+            'tool.status': result.ok ? 'completed' : 'failed',
+            'error.source': result.ok ? undefined : result.error.source,
+            'error.type': result.ok ? undefined : result.error.type,
+            'error.code': result.ok ? undefined : result.error.code,
+            'error.retryable': result.ok ? undefined : result.error.retryable,
+            'output.value': formatTraceText(result.text, 1200),
+          }),
+        statusMessage: (result) => (result.ok ? undefined : result.error.message),
+      }
+    );
   }
 
   private async callToolRaw(name: string, args: Record<string, unknown>): Promise<NormalizedToolResult> {

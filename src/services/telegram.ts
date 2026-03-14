@@ -1,4 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
+import { isMarkdown } from '../utils';
 
 class TelegramService {
   private static instance: TelegramBot;
@@ -62,7 +63,15 @@ class TelegramService {
     options?: TelegramBot.SendMessageOptions
   ): Promise<TelegramBot.Message> {
     const bot = TelegramService.getInstance();
-    return await bot.sendMessage(chatId, message, options);
+    const resolvedOptions =
+      options?.parse_mode || !isMarkdown(message)
+        ? options
+        : {
+            ...options,
+            parse_mode: 'Markdown' as TelegramBot.ParseMode,
+          };
+
+    return await bot.sendMessage(chatId, message, resolvedOptions);
   }
 
   static async sendChatAction(chatId: number, action: TelegramBot.ChatAction): Promise<boolean> {

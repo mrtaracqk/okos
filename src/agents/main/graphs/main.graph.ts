@@ -3,7 +3,7 @@ import { Annotation, BaseCheckpointSaver, END, START, StateGraph, getConfig } fr
 import { catalogAgentGraph, type WorkerRun } from '../../catalog/catalog.agent';
 import { graphCheckpointer } from '../../shared/checkpointing';
 import { extractMessageText, getLastAIMessage, getLastAIMessageText } from '../../shared/messageUtils';
-import { formatSystemLogMultilineValue, sendSystemLog } from '../../../services/systemLog';
+import { buildTraceAttributes, formatTraceText, runChainSpan } from '../../../observability/traceContext';
 import { telegramMainGraphProgressReporter, type MainGraphProgressReporter } from '../progress';
 import { responseAgentNode } from '../nodes/responseAgent.node';
 import { delegateCatalogTool } from '../tools/delegateCatalog.tool';
@@ -101,96 +101,108 @@ function buildCatalogDelegationResult(input: { rawText: string; workerRuns: Work
 
 function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
   return async (state: typeof MainGraphStateAnnotation.State): Promise<Partial<typeof MainGraphStateAnnotation.State>> => {
-    const lastMessage = getLastAIMessage(state.messages);
-    const toolCall = lastMessage?.tool_calls?.find((candidate) => candidate.name === delegateCatalogTool.name);
+    return runChainSpan(
+      'main_graph.catalog_agent_handoff',
+      async () => {
+        const lastMessage = getLastAIMessage(state.messages);
+        const toolCall = lastMessage?.tool_calls?.find((candidate) => candidate.name === delegateCatalogTool.name);
 
-    if (!lastMessage || !toolCall) {
-      return {};
-    }
+        if (!lastMessage || !toolCall) {
+          return {};
+        }
 
-    const statusText = extractMessageText(lastMessage.content).trim() || undefined;
-    const userRequest = typeof toolCall.args?.userRequest === 'string' ? toolCall.args.userRequest.trim() : '';
+        const statusText = extractMessageText(lastMessage.content).trim() || undefined;
+        const userRequest = typeof toolCall.args?.userRequest === 'string' ? toolCall.args.userRequest.trim() : '';
 
-    if (!userRequest) {
-      const directResponse = 'Не удалось передать запрос в catalog-agent: отсутствует обязательный аргумент userRequest.';
-      await sendSystemLog(state.chatId, {
-        lines: [
-          'main-agent -> catalog-agent',
-          `tool: ${toolCall.name}`,
-          'status: failed',
-          'reason: missing required "userRequest" argument',
-        ],
-      });
+        if (!userRequest) {
+          const directResponse = 'Не удалось передать запрос в catalog-agent: отсутствует обязательный аргумент userRequest.';
 
-      return {
-        messages: [
+          return {
+            messages: [
+              new ToolMessage({
+                tool_call_id: toolCall.id ?? toolCall.name,
+                name: toolCall.name,
+                content: 'Catalog handoff failed: missing required "userRequest" argument.',
+              }),
+              new AIMessage(directResponse),
+            ],
+            catalogDelegation: {
+              directResponse,
+              failureWorker: null,
+              rawText: 'Catalog handoff failed: missing required "userRequest" argument.',
+              status: 'failed',
+            } satisfies CatalogDelegationResult,
+          };
+        }
+
+        await progressReporter.onCatalogDelegation({
+          chatId: state.chatId,
+          statusText,
+        });
+
+        const result = await catalogAgentGraph.invoke(
+          {
+            messages: [new HumanMessage(userRequest)],
+          },
+          getConfig()
+        );
+        const rawText = getLastAIMessageText(result.messages) || 'Catalog agent completed without a text response.';
+        const workerRuns = Array.isArray(result.workerRuns) ? result.workerRuns : [];
+        const delegationResult = buildCatalogDelegationResult({
+          rawText,
+          workerRuns,
+        });
+
+        const messages: BaseMessage[] = [
           new ToolMessage({
             tool_call_id: toolCall.id ?? toolCall.name,
-            name: toolCall.name,
-            content: 'Catalog handoff failed: missing required "userRequest" argument.',
+            name: delegateCatalogTool.name,
+            content: rawText,
           }),
-          new AIMessage(directResponse),
-        ],
-        catalogDelegation: {
-          directResponse,
-          failureWorker: null,
-          rawText: 'Catalog handoff failed: missing required "userRequest" argument.',
-          status: 'failed',
-        },
-      };
-    }
+        ];
 
-    await progressReporter.onCatalogDelegation({
-      chatId: state.chatId,
-      statusText,
-    });
-    await sendSystemLog(state.chatId, {
-      lines: [
-        'main-agent -> catalog-agent',
-        `tool: ${toolCall.name}`,
-        statusText ? `statusText: ${formatSystemLogMultilineValue(statusText, 500)}` : null,
-        `userRequest:\n${formatSystemLogMultilineValue(userRequest, 1500)}`,
-      ],
-    });
+        if (delegationResult.directResponse) {
+          messages.push(new AIMessage(delegationResult.directResponse));
+        }
 
-    const result = await catalogAgentGraph.invoke(
-      {
-        messages: [new HumanMessage(userRequest)],
+        return {
+          messages,
+          catalogDelegation: delegationResult,
+        };
       },
-      getConfig()
+      {
+        attributes: buildTraceAttributes({
+          'telegram.chat_id': state.chatId,
+          'tool.name': delegateCatalogTool.name,
+          'catalog.status_text': formatTraceText(extractMessageText(getLastAIMessage(state.messages)?.content).trim() || '', 500),
+          'catalog.user_request': formatTraceText(
+            typeof getLastAIMessage(state.messages)?.tool_calls?.find((candidate) => candidate.name === delegateCatalogTool.name)?.args
+              ?.userRequest === 'string'
+              ? getLastAIMessage(state.messages)?.tool_calls?.find((candidate) => candidate.name === delegateCatalogTool.name)?.args
+                  ?.userRequest
+              : '',
+            1500
+          ),
+        }),
+        mapResultAttributes: (result) =>
+          buildTraceAttributes({
+            'catalog.status': result.catalogDelegation?.status,
+            'catalog.failure_worker': result.catalogDelegation?.failureWorker,
+            'catalog.direct_response': result.catalogDelegation?.directResponse
+              ? formatTraceText(result.catalogDelegation.directResponse, 1000)
+              : undefined,
+            'output.value': result.catalogDelegation?.rawText
+              ? formatTraceText(result.catalogDelegation.rawText, 1500)
+              : undefined,
+          }),
+        statusMessage: (result) =>
+          result.catalogDelegation?.status === 'failed'
+            ? result.catalogDelegation.failureWorker
+              ? `catalog worker failed: ${result.catalogDelegation.failureWorker}`
+              : 'catalog handoff failed'
+            : undefined,
+      }
     );
-    const rawText = getLastAIMessageText(result.messages) || 'Catalog agent completed without a text response.';
-    const workerRuns = Array.isArray(result.workerRuns) ? result.workerRuns : [];
-    const delegationResult = buildCatalogDelegationResult({
-      rawText,
-      workerRuns,
-    });
-    await sendSystemLog(state.chatId, {
-      lines: [
-        'catalog-agent -> main-agent',
-        `status: ${delegationResult.status}`,
-        delegationResult.failureWorker ? `failureWorker: ${delegationResult.failureWorker}` : null,
-        `workerRuns: ${workerRuns.length}`,
-        `response:\n${formatSystemLogMultilineValue(rawText, 1500)}`,
-      ],
-    });
-
-    const messages: BaseMessage[] = [
-      new ToolMessage({
-        tool_call_id: toolCall.id ?? toolCall.name,
-        name: delegateCatalogTool.name,
-        content: rawText,
-      }),
-    ];
-
-    if (delegationResult.directResponse) {
-      messages.push(new AIMessage(delegationResult.directResponse));
-    }
-
-    return {
-      messages,
-      catalogDelegation: delegationResult,
-    };
   };
 }
 

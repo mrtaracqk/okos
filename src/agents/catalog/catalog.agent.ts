@@ -3,8 +3,8 @@ import { tool } from '@langchain/core/tools';
 import { Annotation, BaseCheckpointSaver, START, StateGraph, getConfig } from '@langchain/langgraph';
 import { z } from 'zod';
 import { classifierModel } from '../../config';
+import { buildTraceAttributes, formatTraceText, formatTraceValue, runAgentSpan, runChainSpan, runToolSpan, summarizeToolCallNames } from '../../observability/traceContext';
 import { PROMPTS } from '../../prompts';
-import { formatSystemLogMultilineValue, formatSystemLogValue, sendSystemLogFromCurrentRun } from '../../services/systemLog';
 import { getLastAIMessageText } from '../shared/messageUtils';
 import { type ToolRun } from '../shared/toolLoopGraph';
 import { getCatalogPlaybookIds, getCatalogPlaybookInstructions, renderPlaybookIndexForPrompt } from './playbooks';
@@ -156,6 +156,17 @@ function getWorkerFailure(toolRuns: ToolRun[]) {
   return undefined;
 }
 
+function getLastFailedWorker(workerRuns: WorkerRun[]) {
+  for (let index = workerRuns.length - 1; index >= 0; index -= 1) {
+    const workerRun = workerRuns[index];
+    if (workerRun?.status === 'failed' || workerRun?.status === 'invalid') {
+      return workerRun;
+    }
+  }
+
+  return undefined;
+}
+
 function buildNoToolCallFailure(workerName: CatalogWorkerToolName, task: string): ToolRun {
   return {
     toolName: '(no tool call)',
@@ -236,138 +247,129 @@ async function executeWorkerHandoff(
   const context = typeof toolCall.args?.context === 'string' ? toolCall.args.context : undefined;
   const toolCallId = toolCall.id ?? toolCall.name;
 
-  await sendSystemLogFromCurrentRun({
-    lines: [
-      `catalog-agent -> ${workerName}`,
-      `task: ${formatSystemLogValue(task || '(empty)', 800)}`,
-      context ? `context:\n${formatSystemLogMultilineValue(context, 1000)}` : null,
-      `previousWorkerRuns: ${workerRuns.length}`,
-    ],
-  });
+  return runAgentSpan(
+    'catalog_agent.worker_handoff',
+    async () => {
+      if (!task) {
+        const run: WorkerRun = {
+          agent: workerName,
+          status: 'invalid',
+          task: '',
+          details: 'Missing required "task" argument.',
+        };
 
-  if (!task) {
-    const run: WorkerRun = {
-      agent: workerName,
-      status: 'invalid',
-      task: '',
-      details: 'Missing required "task" argument.',
-    };
+        return {
+          run,
+          toolMessage: new ToolMessage({
+            tool_call_id: toolCallId,
+            name: toolCall.name,
+            content: 'Worker handoff failed: missing required "task" argument.',
+          }),
+        };
+      }
 
-    await sendSystemLogFromCurrentRun({
-      lines: [
-        `catalog-agent -> ${workerName}`,
-        'status: invalid',
-        'reason: missing required "task" argument',
-      ],
-    });
+      const workerGraph = getWorkerGraph(workerName);
+      if (!workerGraph) {
+        const run: WorkerRun = {
+          agent: workerName,
+          status: 'failed',
+          task,
+          details: 'Worker graph is not registered.',
+        };
 
-    return {
-      run,
-      toolMessage: new ToolMessage({
-        tool_call_id: toolCallId,
-        name: toolCall.name,
-        content: 'Worker handoff failed: missing required "task" argument.',
+        return {
+          run,
+          toolMessage: new ToolMessage({
+            tool_call_id: toolCallId,
+            name: toolCall.name,
+            content: `Worker "${toolCall.name}" is not registered.`,
+          }),
+        };
+      }
+
+      try {
+        const result = await runAgentSpan(
+          `worker.${workerName}`,
+          async () =>
+            workerGraph.invoke(
+              {
+                messages: [new HumanMessage(buildWorkerInput(task, context))],
+              },
+              getConfig()
+            ),
+          {
+            attributes: buildTraceAttributes({
+              'catalog.worker_name': workerName,
+              'catalog.task': formatTraceValue(task, 800),
+              'catalog.context': context ? formatTraceText(context, 1000) : undefined,
+            }),
+          }
+        );
+
+        const workerText = getLastAIMessageText(result.messages) || `${workerName} completed without a text response.`;
+        const rawWorkerToolRuns = Array.isArray(result.toolRuns) ? result.toolRuns : [];
+        const synthesizedFailure =
+          rawWorkerToolRuns.length === 0 ? buildNoToolCallFailure(workerName, task) : undefined;
+        const workerToolRuns = synthesizedFailure ? [...rawWorkerToolRuns, synthesizedFailure] : rawWorkerToolRuns;
+        const workerFailure = getWorkerFailure(workerToolRuns);
+        const runStatus = resolveWorkerRunStatus(workerText, workerToolRuns, Boolean(synthesizedFailure));
+        const details =
+          runStatus === 'failed' && workerFailure
+            ? `${workerText}\n\n${formatWorkerFailure(workerFailure)}`
+            : workerText;
+        const run: WorkerRun = {
+          agent: workerName,
+          status: runStatus,
+          task,
+          details,
+          toolRuns: workerToolRuns,
+        };
+
+        return {
+          run,
+          toolMessage: new ToolMessage({
+            tool_call_id: toolCallId,
+            name: toolCall.name,
+            content: details,
+          }),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown worker execution error.';
+        const run: WorkerRun = {
+          agent: workerName,
+          status: 'failed',
+          task,
+          details: message,
+        };
+
+        return {
+          run,
+          toolMessage: new ToolMessage({
+            tool_call_id: toolCallId,
+            name: toolCall.name,
+            content: `Worker "${toolCall.name}" failed: ${message}`,
+          }),
+        };
+      }
+    },
+    {
+      attributes: buildTraceAttributes({
+        'catalog.worker_name': workerName,
+        'catalog.previous_worker_runs': workerRuns.length,
+        'catalog.task': formatTraceValue(task || '(empty)', 800),
+        'catalog.context': context ? formatTraceText(context, 1000) : undefined,
       }),
-    };
-  }
-
-  const workerGraph = getWorkerGraph(workerName);
-  if (!workerGraph) {
-    const run: WorkerRun = {
-      agent: workerName,
-      status: 'failed',
-      task,
-      details: 'Worker graph is not registered.',
-    };
-
-    await sendSystemLogFromCurrentRun({
-      lines: [
-        `catalog-agent -> ${workerName}`,
-        'status: failed',
-        'reason: worker graph is not registered',
-      ],
-    });
-
-    return {
-      run,
-      toolMessage: new ToolMessage({
-        tool_call_id: toolCallId,
-        name: toolCall.name,
-        content: `Worker "${toolCall.name}" is not registered.`,
-      }),
-    };
-  }
-
-  try {
-    const result = await workerGraph.invoke(
-      {
-        messages: [new HumanMessage(buildWorkerInput(task, context))],
-      },
-      getConfig()
-    );
-
-    const workerText = getLastAIMessageText(result.messages) || `${workerName} completed without a text response.`;
-    const rawWorkerToolRuns = Array.isArray(result.toolRuns) ? result.toolRuns : [];
-    const synthesizedFailure =
-      rawWorkerToolRuns.length === 0 ? buildNoToolCallFailure(workerName, task) : undefined;
-    const workerToolRuns = synthesizedFailure ? [...rawWorkerToolRuns, synthesizedFailure] : rawWorkerToolRuns;
-    const workerFailure = getWorkerFailure(workerToolRuns);
-    const runStatus = resolveWorkerRunStatus(workerText, workerToolRuns, Boolean(synthesizedFailure));
-    const details =
-      runStatus === 'failed' && workerFailure
-        ? `${workerText}\n\n${formatWorkerFailure(workerFailure)}`
-        : workerText;
-    const run: WorkerRun = {
-      agent: workerName,
-      status: runStatus,
-      task,
-      details,
-      toolRuns: workerToolRuns,
-    };
-
-    await sendSystemLogFromCurrentRun({
-      lines: [
-        `${workerName} -> catalog-agent`,
-        `status: ${runStatus}`,
-        `toolRuns: ${workerToolRuns.length}`,
-        `details:\n${formatSystemLogMultilineValue(details, 1200)}`,
-      ],
-    });
-
-    return {
-      run,
-      toolMessage: new ToolMessage({
-        tool_call_id: toolCallId,
-        name: toolCall.name,
-        content: details,
-      }),
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown worker execution error.';
-    const run: WorkerRun = {
-      agent: workerName,
-      status: 'failed',
-      task,
-      details: message,
-    };
-
-    await sendSystemLogFromCurrentRun({
-      lines: [
-        `${workerName} -> catalog-agent`,
-        'status: failed',
-        `error: ${formatSystemLogValue(message, 1000)}`,
-      ],
-    });
-
-    return {
-      run,
-      toolMessage: new ToolMessage({
-        tool_call_id: toolCallId,
-        name: toolCall.name,
-        content: `Worker "${toolCall.name}" failed: ${message}`,
-      }),
-    };
-  }
+      mapResultAttributes: ({ run }) =>
+        buildTraceAttributes({
+          'catalog.status': run.status,
+          'catalog.worker_name': run.agent,
+          'catalog.tool_runs': run.toolRuns?.length,
+          'output.value': run.details ? formatTraceText(run.details, 1200) : undefined,
+        }),
+      statusMessage: ({ run }) =>
+        run.status === 'failed' || run.status === 'invalid' ? run.details || `worker handoff ${run.status}` : undefined,
+    }
+  );
 }
 
 async function executeCatalogToolCall(
@@ -383,47 +385,40 @@ async function executeCatalogToolCall(
     const playbookId = typeof toolCall.args?.playbookId === 'string' ? toolCall.args.playbookId.trim() : '';
     const toolCallId = toolCall.id ?? toolCall.name;
 
-    await sendSystemLogFromCurrentRun({
-      lines: [
-        'catalog-agent -> inspect_catalog_playbook',
-        `playbookId: ${formatSystemLogValue(playbookId || '(empty)', 400)}`,
-      ],
-    });
+    return runToolSpan(
+      'catalog_agent.inspect_playbook',
+      async () => {
+        if (!playbookId) {
+          return {
+            toolMessage: new ToolMessage({
+              tool_call_id: toolCallId,
+              name: toolCall.name,
+              content: 'Playbook inspection failed: missing required "playbookId" argument.',
+            }),
+          };
+        }
 
-    if (!playbookId) {
-      await sendSystemLogFromCurrentRun({
-        lines: [
-          'catalog-agent -> inspect_catalog_playbook',
-          'status: failed',
-          'reason: missing required "playbookId" argument',
-        ],
-      });
+        const content = await inspectCatalogPlaybookTool.invoke({ playbookId });
 
-      return {
-        toolMessage: new ToolMessage({
-          tool_call_id: toolCallId,
-          name: toolCall.name,
-          content: 'Playbook inspection failed: missing required "playbookId" argument.',
+        return {
+          toolMessage: new ToolMessage({
+            tool_call_id: toolCallId,
+            name: toolCall.name,
+            content: typeof content === 'string' ? content : JSON.stringify(content),
+          }),
+        };
+      },
+      {
+        attributes: buildTraceAttributes({
+          'catalog.playbook_id': playbookId || '(empty)',
         }),
-      };
-    }
-
-    const content = await inspectCatalogPlaybookTool.invoke({ playbookId });
-    await sendSystemLogFromCurrentRun({
-      lines: [
-        'inspect_catalog_playbook -> catalog-agent',
-        'status: completed',
-        `playbookId: ${formatSystemLogValue(playbookId, 400)}`,
-      ],
-    });
-
-    return {
-      toolMessage: new ToolMessage({
-        tool_call_id: toolCallId,
-        name: toolCall.name,
-        content: typeof content === 'string' ? content : JSON.stringify(content),
-      }),
-    };
+        mapResultAttributes: ({ toolMessage }) =>
+          buildTraceAttributes({
+            'output.value': formatTraceText(toolMessage.content, 1000),
+          }),
+        statusMessage: () => (!playbookId ? 'missing required "playbookId" argument' : undefined),
+      }
+    );
   }
 
   return {
@@ -438,69 +433,103 @@ async function executeCatalogToolCall(
 const catalogAgentNode = async (
   state: typeof CatalogGraphStateAnnotation.State
 ): Promise<Partial<typeof CatalogGraphStateAnnotation.State>> => {
-  const conversation: BaseMessage[] = [...state.messages];
-  const workerRuns: WorkerRun[] = [...state.workerRuns];
-  const systemMessage = new SystemMessage(PROMPTS.CATALOG_AGENT.SYSTEM(renderPlaybookIndexForPrompt()));
-  const runnableModel = classifierModel.bindTools(catalogAgentTools);
+  return runAgentSpan(
+    'catalog_agent.invoke',
+    async () => {
+      const conversation: BaseMessage[] = [...state.messages];
+      const workerRuns: WorkerRun[] = [...state.workerRuns];
+      const systemMessage = new SystemMessage(PROMPTS.CATALOG_AGENT.SYSTEM(renderPlaybookIndexForPrompt()));
+      const runnableModel = classifierModel.bindTools(catalogAgentTools);
 
-  await sendSystemLogFromCurrentRun({
-    lines: [
-      'catalog-agent started',
-      `input:\n${formatSystemLogMultilineValue(getLastAIMessageText(conversation) || conversation[conversation.length - 1]?.content, 1500)}`,
-    ],
-  });
+      for (let iteration = 0; iteration < MAX_PLANNER_ITERATIONS; iteration += 1) {
+        const iterationResult = await runChainSpan(
+          'catalog_agent.planner_iteration',
+          async () => {
+            const response = await runnableModel.invoke([systemMessage, ...conversation]);
+            const toolCalls = Array.isArray(response.tool_calls) ? response.tool_calls : [];
 
-  for (let iteration = 0; iteration < MAX_PLANNER_ITERATIONS; iteration += 1) {
-    const response = await runnableModel.invoke([systemMessage, ...conversation]);
-    conversation.push(response);
+            return {
+              response,
+              toolCalls,
+            };
+          },
+          {
+            attributes: buildTraceAttributes({
+              'catalog.iteration': iteration + 1,
+              'catalog.worker_runs': workerRuns.length,
+            }),
+            mapResultAttributes: ({ response, toolCalls }) =>
+              buildTraceAttributes({
+                'catalog.iteration': iteration + 1,
+                'catalog.tool_call_count': toolCalls.length,
+                'catalog.tool_call_names': summarizeToolCallNames(toolCalls),
+                'output.value': toolCalls.length === 0 ? formatTraceText(getLastAIMessageText([response]), 1000) : undefined,
+              }),
+          }
+        );
 
-    const toolCalls = Array.isArray(response.tool_calls) ? response.tool_calls : [];
-    await sendSystemLogFromCurrentRun({
-      lines: [
-        `catalog-agent planner iteration ${iteration + 1}`,
-        `toolCalls: ${toolCalls.length}`,
-        toolCalls.length > 0
-          ? `calls: ${toolCalls
-              .map((toolCall) => `${toolCall.name}(${formatSystemLogValue(toolCall.args, 400)})`)
-              .join('; ')}`
-          : `response:\n${formatSystemLogMultilineValue(getLastAIMessageText([response]), 1000)}`,
-      ],
-    });
+        conversation.push(iterationResult.response);
 
-    if (toolCalls.length === 0) {
+        if (iterationResult.toolCalls.length === 0) {
+          return {
+            messages: conversation.slice(state.messages.length),
+            workerRuns,
+          };
+        }
+
+        for (const toolCall of iterationResult.toolCalls) {
+          const { run, toolMessage } = await executeCatalogToolCall(toolCall, workerRuns);
+          if (run) {
+            workerRuns.push(run);
+          }
+          conversation.push(toolMessage);
+        }
+      }
+
+      conversation.push(
+        new HumanMessage('Stop using worker agents. Return the best possible partial result with any missing inputs clearly listed.')
+      );
+
+      const fallbackResponse = await runChainSpan(
+        'catalog_agent.planner_iteration',
+        async () => runnableModel.invoke([systemMessage, ...conversation]),
+        {
+          attributes: buildTraceAttributes({
+            'catalog.iteration': MAX_PLANNER_ITERATIONS + 1,
+            'catalog.status': 'planner_limit_reached',
+          }),
+          mapResultAttributes: (response) =>
+            buildTraceAttributes({
+              'output.value': formatTraceText(getLastAIMessageText([response]), 1000),
+            }),
+          statusMessage: () => 'planner iteration limit reached',
+        }
+      );
+      conversation.push(fallbackResponse);
+
       return {
         messages: conversation.slice(state.messages.length),
         workerRuns,
       };
+    },
+    {
+      attributes: buildTraceAttributes({
+        'catalog.input': formatTraceText(
+          getLastAIMessageText(state.messages) || state.messages[state.messages.length - 1]?.content,
+          1500
+        ),
+      }),
+      mapResultAttributes: (result) =>
+        buildTraceAttributes({
+          'catalog.worker_runs': result.workerRuns.length,
+          'catalog.failure_worker': getLastFailedWorker(result.workerRuns)?.agent,
+        }),
+      statusMessage: (result) => {
+        const failedWorker = getLastFailedWorker(result.workerRuns);
+        return failedWorker ? `catalog worker failed: ${failedWorker.agent}` : undefined;
+      },
     }
-
-    for (const toolCall of toolCalls) {
-      const { run, toolMessage } = await executeCatalogToolCall(toolCall, workerRuns);
-      if (run) {
-        workerRuns.push(run);
-      }
-      conversation.push(toolMessage);
-    }
-  }
-
-  conversation.push(
-    new HumanMessage('Stop using worker agents. Return the best possible partial result with any missing inputs clearly listed.')
   );
-
-  const fallbackResponse = await runnableModel.invoke([systemMessage, ...conversation]);
-  conversation.push(fallbackResponse);
-  await sendSystemLogFromCurrentRun({
-    lines: [
-      'catalog-agent planner limit reached',
-      `iterations: ${MAX_PLANNER_ITERATIONS}`,
-      `fallbackResponse:\n${formatSystemLogMultilineValue(getLastAIMessageText([fallbackResponse]), 1000)}`,
-    ],
-  });
-
-  return {
-    messages: conversation.slice(state.messages.length),
-    workerRuns,
-  };
 };
 
 function buildCatalogAgentGraph(checkpointer?: BaseCheckpointSaver | boolean, name = 'catalog-agent') {

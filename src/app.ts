@@ -1,3 +1,4 @@
+import './observability/phoenix';
 import { html } from '@elysiajs/html';
 import { Elysia } from 'elysia';
 import TelegramBot from 'node-telegram-bot-api';
