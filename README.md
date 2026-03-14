@@ -87,9 +87,12 @@ For local development, `docker-compose.dev.yml` starts only Redis. The bot runs 
 If you use the WooCommerce catalog flow, make sure the WooCommerce MCP server is reachable from the app and that `.env` includes:
 
 ```bash
-WOOCOMMERCE_MCP_BASE_URL=http://mag-service:3000/mcp/woocommerce-mcp
+WOOCOMMERCE_MCP_BASE_URL=http://woo-mcp:3000/mcp
+# optional when the MCP endpoint is protected
 WOOCOMMERCE_MCP_TOKEN=your_token
 ```
+
+Mutating WooCommerce actions are guarded by a runtime Telegram approval step. By default the assistant waits up to 5 minutes for approval before failing the action. Override this with `WOOCOMMERCE_APPROVAL_TIMEOUT_MS` if needed.
 
 Production mode:
 
@@ -130,7 +133,7 @@ Cloud deployment:
 - `OPENWEATHERMAP_API_KEY`: OpenWeatherMap API key for weather information
 - `REDIS_URL`: Redis connection URL
 - `WOOCOMMERCE_MCP_BASE_URL`: Full URL of the WooCommerce MCP endpoint
-- `WOOCOMMERCE_MCP_TOKEN`: Bearer token for the WooCommerce MCP endpoint
+- `WOOCOMMERCE_MCP_TOKEN`: Optional bearer token for the WooCommerce MCP endpoint
 
 ### Provider-Specific
 
@@ -156,6 +159,7 @@ Cloud deployment:
 - `LANGCHAIN_ENDPOINT`: LangSmith endpoint
 - `LANGCHAIN_API_KEY`: LangSmith API key
 - `LANGCHAIN_PROJECT`: LangSmith project name
+- `WOOCOMMERCE_APPROVAL_TIMEOUT_MS`: Runtime approval timeout in milliseconds for mutating WooCommerce actions (default: `300000`)
 
 ## Catalog Orchestration
 

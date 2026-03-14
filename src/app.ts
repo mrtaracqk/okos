@@ -1,11 +1,13 @@
 import { html } from '@elysiajs/html';
 import { Elysia } from 'elysia';
 import TelegramBot from 'node-telegram-bot-api';
+import { runWithTelegramRequestContext, type TelegramRequestContext } from './approval/requestContext';
 import { handleClearHistory, handleMessage, handlePhoto } from './handlers';
 import MessageQueueService, { MessagePayload } from './services/messageQueue';
 import { RedisService } from './services/redis';
 import { ReminderQueueService } from './services/reminderQueue';
 import TelegramService from './services/telegram';
+import { handleTelegramApprovalCallback } from './services/toolApproval';
 import { validateWooCommerceTransportOnStartup } from './services/woocommerceTransport';
 
 const port = process.env.PORT || 11435;
@@ -33,6 +35,21 @@ void bootstrapCatalogTransport()
 const queueService = MessageQueueService.getInstance();
 const reminderQueueService = ReminderQueueService.getInstance(); // Initialize reminder queue service
 const redisService = new RedisService();
+
+function buildTelegramRequestContext(input: {
+  chatId: number;
+  from?: TelegramBot.User;
+}): TelegramRequestContext | null {
+  if (!input.from) {
+    return null;
+  }
+
+  return {
+    chatId: input.chatId,
+    telegramUserId: input.from.id,
+    telegramUsername: input.from.username,
+  };
+}
 
 /**
  * Authentication guard function to check if a user is authorized
@@ -66,17 +83,19 @@ async function authGuard(username: string | undefined, chatId: number, userInput
 
 // Register the function that will process messages from the queue
 queueService.registerMessageProcessor(async (payload: MessagePayload) => {
-  const { chatId, type, content } = payload;
+  const { chatId, type, content, context } = payload;
 
   try {
-    if (type === 'text') {
-      await handleMessage(chatId, content as string);
-    } else if (type === 'photo') {
-      const photoContent = content as { photos: any[]; caption?: string };
-      await handlePhoto(chatId, photoContent.photos, photoContent.caption);
-    } else if (type === 'sticker') {
-      await handleMessage(chatId, content as string);
-    }
+    await runWithTelegramRequestContext(context, async () => {
+      if (type === 'text') {
+        await handleMessage(chatId, content as string);
+      } else if (type === 'photo') {
+        const photoContent = content as { photos: any[]; caption?: string };
+        await handlePhoto(chatId, photoContent.photos, photoContent.caption);
+      } else if (type === 'sticker') {
+        await handleMessage(chatId, content as string);
+      }
+    });
   } catch (error) {
     console.error(`Error processing ${type} message:`, error);
   }
@@ -109,6 +128,9 @@ new Elysia()
       return renderHtml('Bot is starting up. Please try again in a moment.');
     }
   })
+  .get('/healthz', () => ({
+    ok: true,
+  }))
   .post('/webhook', ({ body }: { body: TelegramBot.Update }) => {
     bot.processUpdate(body);
     return 'ok';
@@ -133,6 +155,10 @@ bot.on('text', async (msg) => {
   const chatId = msg.chat.id;
   const username = msg.from?.username;
   const text = msg.text;
+  const requestContext = buildTelegramRequestContext({
+    chatId,
+    from: msg.from,
+  });
 
   if (!text) {
     return;
@@ -175,11 +201,17 @@ bot.on('text', async (msg) => {
     return;
   }
 
+  if (!requestContext) {
+    await bot.sendMessage(chatId, 'Unable to process this message because the Telegram runtime context is missing.');
+    return;
+  }
+
   // Add message to queue instead of processing immediately
   await queueService.addMessage({
     chatId,
     type: 'text',
     content: text,
+    context: requestContext,
   });
 });
 
@@ -192,12 +224,21 @@ bot.on('photo', async (msg) => {
   const photos = msg.photo;
   const caption = msg.caption;
   const mediaGroupId = msg.media_group_id;
+  const requestContext = buildTelegramRequestContext({
+    chatId,
+    from: msg.from,
+  });
 
   if (!photos) return;
 
   // Check if user is authorized
   const isAuthorized = await authGuard(username, chatId, caption);
   if (!isAuthorized) {
+    return;
+  }
+
+  if (!requestContext) {
+    await bot.sendMessage(chatId, 'Unable to process this message because the Telegram runtime context is missing.');
     return;
   }
 
@@ -212,6 +253,7 @@ bot.on('photo', async (msg) => {
         photos: [photo],
         caption,
       },
+      context: requestContext,
     });
     return;
   }
@@ -236,6 +278,7 @@ bot.on('photo', async (msg) => {
           photos: group.photos,
           caption: group.caption,
         },
+        context: requestContext,
       });
       mediaGroups.delete(mediaGroupId);
     }
@@ -247,6 +290,10 @@ bot.on('sticker', async (msg) => {
   const username = msg.from?.username;
   const sticker = msg.sticker;
   const emoji = sticker?.emoji;
+  const requestContext = buildTelegramRequestContext({
+    chatId,
+    from: msg.from,
+  });
 
   // Check if user is authorized
   const isAuthorized = await authGuard(username, chatId);
@@ -255,15 +302,36 @@ bot.on('sticker', async (msg) => {
   }
 
   if (emoji) {
+    if (!requestContext) {
+      await bot.sendMessage(chatId, 'Unable to process this message because the Telegram runtime context is missing.');
+      return;
+    }
+
     return queueService.addMessage({
       chatId,
       type: 'sticker',
       content: emoji,
+      context: requestContext,
     });
   }
 
   if (sticker?.file_id) {
     return bot.sendSticker(chatId, sticker.file_id);
+  }
+});
+
+bot.on('callback_query', async (callbackQuery) => {
+  try {
+    const handled = await handleTelegramApprovalCallback(callbackQuery);
+    if (!handled) {
+      await TelegramService.answerCallbackQuery(callbackQuery.id);
+    }
+  } catch (error) {
+    console.error('Error processing callback query:', error);
+    await TelegramService.answerCallbackQuery(callbackQuery.id, {
+      text: 'Не удалось обработать callback.',
+      show_alert: true,
+    }).catch(() => undefined);
   }
 });
 

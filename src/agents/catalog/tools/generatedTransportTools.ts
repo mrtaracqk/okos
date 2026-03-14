@@ -11,14 +11,39 @@ import { getWooCommerceTransportService } from '../../../services/woocommerceTra
 type JsonSchemaObject = {
   type?: string | string[];
   description?: string;
-  enum?: Array<string | number | boolean | null>;
+  enum?: ReadonlyArray<string | number | boolean | null>;
   properties?: Record<string, JsonSchemaObject>;
-  required?: string[];
-  items?: JsonSchemaObject | JsonSchemaObject[];
+  required?: ReadonlyArray<string>;
+  items?: JsonSchemaObject | ReadonlyArray<JsonSchemaObject>;
   additionalProperties?: boolean | JsonSchemaObject;
-  anyOf?: JsonSchemaObject[];
-  oneOf?: JsonSchemaObject[];
+  anyOf?: ReadonlyArray<JsonSchemaObject>;
+  oneOf?: ReadonlyArray<JsonSchemaObject>;
 };
+
+type GeneratedTransportTool = ReturnType<typeof tool> & {
+  actualToolName: GeneratedWooCommerceToolName;
+};
+
+function buildModelSafeToolNameMap() {
+  const toolNames = Object.keys(generatedWooCommerceToolRegistry) as GeneratedWooCommerceToolName[];
+  const actualToSafe = new Map<GeneratedWooCommerceToolName, string>();
+  const safeToActual = new Map<string, GeneratedWooCommerceToolName>();
+
+  for (const toolName of toolNames) {
+    const safeToolName = toolName.replace(/\./g, '_');
+    const duplicate = safeToActual.get(safeToolName);
+    if (duplicate && duplicate !== toolName) {
+      throw new Error(`Generated WooCommerce tool alias collision: "${toolName}" and "${duplicate}" -> "${safeToolName}"`);
+    }
+
+    actualToSafe.set(toolName, safeToolName);
+    safeToActual.set(safeToolName, toolName);
+  }
+
+  return actualToSafe;
+}
+
+const generatedToolNameAliases = buildModelSafeToolNameMap();
 
 function applyDescription(schema: z.ZodTypeAny, description?: string) {
   return description ? schema.describe(description) : schema;
@@ -38,7 +63,7 @@ function buildObjectSchema(schema: JsonSchemaObject) {
   return applyDescription(objectSchema, schema.description);
 }
 
-function buildUnionSchema(schemaOptions: JsonSchemaObject[]) {
+function buildUnionSchema(schemaOptions: ReadonlyArray<JsonSchemaObject>) {
   if (schemaOptions.length === 0) {
     return z.any();
   }
@@ -57,7 +82,7 @@ function buildUnionSchema(schemaOptions: JsonSchemaObject[]) {
   return unionSchema;
 }
 
-function buildEnumSchema(values: Array<string | number | boolean | null>, description?: string) {
+function buildEnumSchema(values: ReadonlyArray<string | number | boolean | null>, description?: string) {
   const literals = values.map((value) => z.literal(value));
 
   if (literals.length === 0) {
@@ -112,7 +137,7 @@ function buildZodSchema(schema: JsonSchemaObject): z.ZodTypeAny {
 
 function buildInputSchema(toolName: GeneratedWooCommerceToolName) {
   const spec = generatedWooCommerceToolRegistry[toolName];
-  return buildZodSchema((spec.inputSchema ?? { type: 'object', additionalProperties: true }) as JsonSchemaObject);
+  return buildZodSchema((spec.inputSchema ?? { type: 'object', additionalProperties: true }) as unknown as JsonSchemaObject);
 }
 
 function buildToolDescription(toolName: GeneratedWooCommerceToolName) {
@@ -123,16 +148,19 @@ function buildToolDescription(toolName: GeneratedWooCommerceToolName) {
 export function createGeneratedTransportTools(workerName: GeneratedWooCommerceWorkerName) {
   const transportService = getWooCommerceTransportService();
 
-  return generatedWooCommerceWorkerToolsets[workerName].map((toolName) =>
-    tool(
+  return generatedWooCommerceWorkerToolsets[workerName].map((toolName) => {
+    const generatedTool = tool(
       async (args: Record<string, unknown>) => {
         return transportService.callTool(toolName, args ?? {});
       },
       {
-        name: toolName,
+        // OpenAI tool calling rejects dots in function names, while MCP tool names use them.
+        name: generatedToolNameAliases.get(toolName) ?? toolName,
         description: buildToolDescription(toolName),
         schema: buildInputSchema(toolName),
       }
-    )
-  );
+    );
+
+    return Object.assign(generatedTool, { actualToolName: toolName }) as GeneratedTransportTool;
+  });
 }

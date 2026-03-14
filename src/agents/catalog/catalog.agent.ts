@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { classifierModel } from '../../config';
 import { PROMPTS } from '../../prompts';
 import { getLastAIMessageText } from '../shared/messageUtils';
+import { type ToolRun } from '../shared/toolLoopGraph';
 import { getCatalogPlaybookIds, getCatalogPlaybookInstructions, renderPlaybookIndexForPrompt } from './playbooks';
 import { attributeWorkerGraph } from './workers/attribute.worker';
 import { categoryWorkerGraph } from './workers/category.worker';
@@ -17,11 +18,12 @@ type CatalogWorkerToolName =
   | 'run_product_worker'
   | 'run_variation_worker';
 
-type WorkerRun = {
+export type WorkerRun = {
   agent: CatalogWorkerToolName;
   details?: string;
   status: 'completed' | 'failed' | 'invalid';
   task: string;
+  toolRuns?: ToolRun[];
 };
 
 const MAX_PLANNER_ITERATIONS = 8;
@@ -138,6 +140,92 @@ function getWorkerGraph(workerName: CatalogWorkerToolName) {
   }
 }
 
+function getDeclaredWorkerStatus(workerText: string) {
+  const match = workerText.match(/^Status:\s*(success|partial|failed)\b/im);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+function getWorkerFailure(toolRuns: ToolRun[]) {
+  for (let index = toolRuns.length - 1; index >= 0; index -= 1) {
+    if (toolRuns[index]?.status === 'failed') {
+      return toolRuns[index];
+    }
+  }
+
+  return undefined;
+}
+
+function buildNoToolCallFailure(workerName: CatalogWorkerToolName, task: string): ToolRun {
+  return {
+    toolName: '(no tool call)',
+    args: {
+      worker: workerName,
+      task,
+    },
+    status: 'failed',
+    text: 'Worker returned without calling any WooCommerce tool.',
+    structured: null,
+    error: {
+      source: 'catalog-worker',
+      type: 'no_tool_calls',
+      message:
+        'Worker returned without calling any WooCommerce tool. This failure was produced by the agent layer before any MAG or Woo request was made.',
+      retryable: false,
+    },
+  };
+}
+
+function resolveWorkerRunStatus(
+  workerText: string,
+  toolRuns: ToolRun[],
+  hasNoToolCallFailure: boolean
+): WorkerRun['status'] {
+  const declaredStatus = getDeclaredWorkerStatus(workerText);
+  if (declaredStatus === 'failed') {
+    return 'failed';
+  }
+
+  if (hasNoToolCallFailure) {
+    return 'failed';
+  }
+
+  if (!declaredStatus && toolRuns[toolRuns.length - 1]?.status === 'failed') {
+    return 'failed';
+  }
+
+  return 'completed';
+}
+
+function formatWorkerFailure(toolRun: ToolRun | undefined) {
+  if (!toolRun) {
+    return '';
+  }
+
+  const lines = [
+    `Failure Tool: ${toolRun.toolName}`,
+    `Failure Source: ${toolRun.error?.source ?? 'unknown'}`,
+    `Failure Message: ${toolRun.error?.message ?? toolRun.text}`,
+  ];
+
+  if (toolRun.error?.type) {
+    lines.push(`Failure Type: ${toolRun.error.type}`);
+  }
+
+  if (toolRun.error?.code) {
+    lines.push(`Failure Code: ${toolRun.error.code}`);
+  }
+
+  if (typeof toolRun.error?.retryable === 'boolean') {
+    lines.push(`Retryable: ${toolRun.error.retryable ? 'yes' : 'no'}`);
+  }
+
+  if (Object.keys(toolRun.args).length > 0) {
+    lines.push(`Failure Args: ${JSON.stringify(toolRun.args)}`);
+  }
+
+  return lines.join('\n');
+}
+
 async function executeWorkerHandoff(
   toolCall: any,
   workerRuns: WorkerRun[]
@@ -193,11 +281,22 @@ async function executeWorkerHandoff(
     );
 
     const workerText = getLastAIMessageText(result.messages) || `${workerName} completed without a text response.`;
+    const rawWorkerToolRuns = Array.isArray(result.toolRuns) ? result.toolRuns : [];
+    const synthesizedFailure =
+      rawWorkerToolRuns.length === 0 ? buildNoToolCallFailure(workerName, task) : undefined;
+    const workerToolRuns = synthesizedFailure ? [...rawWorkerToolRuns, synthesizedFailure] : rawWorkerToolRuns;
+    const workerFailure = getWorkerFailure(workerToolRuns);
+    const runStatus = resolveWorkerRunStatus(workerText, workerToolRuns, Boolean(synthesizedFailure));
+    const details =
+      runStatus === 'failed' && workerFailure
+        ? `${workerText}\n\n${formatWorkerFailure(workerFailure)}`
+        : workerText;
     const run: WorkerRun = {
       agent: workerName,
-      status: 'completed',
+      status: runStatus,
       task,
-      details: workerText,
+      details,
+      toolRuns: workerToolRuns,
     };
 
     return {
@@ -205,7 +304,7 @@ async function executeWorkerHandoff(
       toolMessage: new ToolMessage({
         tool_call_id: toolCallId,
         name: toolCall.name,
-        content: workerText,
+        content: details,
       }),
     };
   } catch (error) {

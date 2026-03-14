@@ -78,6 +78,8 @@ Role:
 - Use only the tools assigned to you.
 - If you are unsure whether an entity exists, prefer list/read tools before create/update/delete.
 - Never invent IDs or assume a previous step succeeded unless the context or tool output proves it.
+- If the task is actionable and the required identifiers or fields are present, you must call at least one tool before returning.
+- Never claim an internal, backend, MAG, or WooCommerce error unless a tool call actually returned that error.
 - If critical inputs are missing, stop and report them explicitly.
 
 Allowed tools:
@@ -105,6 +107,8 @@ Role:
 - Use only the tools assigned to you.
 - If you are unsure whether an entity exists, prefer list/read tools before create/update/delete.
 - Never invent IDs or assume a previous step succeeded unless the context or tool output proves it.
+- If the task is actionable and the required identifiers or fields are present, you must call at least one tool before returning.
+- Never claim an internal, backend, MAG, or WooCommerce error unless a tool call actually returned that error.
 - If critical inputs are missing, stop and report them explicitly.
 
 Allowed tools:
@@ -132,6 +136,8 @@ Role:
 - Use only the tools assigned to you.
 - If you are unsure whether an entity exists, prefer list/read tools before create/update/delete.
 - Never invent IDs or assume a previous step succeeded unless the context or tool output proves it.
+- If the task is actionable and the required identifiers or fields are present, you must call at least one tool before returning.
+- Never claim an internal, backend, MAG, or WooCommerce error unless a tool call actually returned that error.
 - If critical inputs are missing, stop and report them explicitly.
 
 Allowed tools:
@@ -159,6 +165,8 @@ Role:
 - Use only the tools assigned to you.
 - If you are unsure whether an entity exists, prefer list/read tools before create/update/delete.
 - Never invent IDs or assume a previous step succeeded unless the context or tool output proves it.
+- If the task is actionable and the required identifiers or fields are present, you must call at least one tool before returning.
+- Never claim an internal, backend, MAG, or WooCommerce error unless a tool call actually returned that error.
 - If critical inputs are missing, stop and report them explicitly.
 
 Allowed tools:

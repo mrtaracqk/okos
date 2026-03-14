@@ -4,7 +4,9 @@ import {
   generatedWooCommerceToolRegistry,
   generatedWooCommerceWorkerToolsets,
 } from '../generated/woocommerceTools.generated';
-import { MCP_SERVERS } from '../mcpServers';
+import { isApprovalGateError } from '../approval/core';
+import { MCP_SERVERS, shouldValidateWooCommerceMcpOnStartup } from '../mcpServers';
+import { runWooCommerceToolWithApproval } from './toolApproval';
 
 type ToolResultContent =
   | {
@@ -35,6 +37,35 @@ type ToolCallResponse = {
   toolResult?: unknown;
 };
 
+type ToolErrorSource = 'approval-gate' | 'woo-mcp' | 'woocommerce-transport';
+
+type NormalizedToolError = {
+  source: ToolErrorSource;
+  message: string;
+  code?: string;
+  type?: string;
+  retryable: boolean;
+};
+
+type NormalizedToolSuccess = {
+  tool: string;
+  ok: true;
+  text: string;
+  structured: Record<string, unknown> | null;
+  content: ToolResultContent[];
+};
+
+type NormalizedToolFailure = {
+  tool: string;
+  ok: false;
+  text: string;
+  structured: Record<string, unknown> | null;
+  content: ToolResultContent[];
+  error: NormalizedToolError;
+};
+
+type NormalizedToolResult = NormalizedToolSuccess | NormalizedToolFailure;
+
 function normalizeTextContent(content: ToolResultContent[] | undefined) {
   if (!Array.isArray(content) || content.length === 0) {
     return '';
@@ -62,6 +93,76 @@ function normalizeTextContent(content: ToolResultContent[] | undefined) {
 
 function getRequiredToolNames() {
   return Array.from(new Set(Object.values(generatedWooCommerceWorkerToolsets).flat()));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readNestedError(structuredContent: Record<string, unknown> | null | undefined) {
+  if (!isRecord(structuredContent)) {
+    return null;
+  }
+
+  const error = structuredContent.error;
+  return isRecord(error) ? error : null;
+}
+
+function inferToolErrorSource(input: { code?: string; type?: string; message: string }): ToolErrorSource {
+  if (input.code?.startsWith('WOO_')) {
+    return 'woo-mcp';
+  }
+
+  if (input.type?.startsWith('approval_')) {
+    return 'approval-gate';
+  }
+
+  return 'woocommerce-transport';
+}
+
+function isRetryableToolError(input: { source: ToolErrorSource; code?: string; type?: string; message: string }) {
+  const normalizedMessage = input.message.toLowerCase();
+  return (
+    input.type === 'approval_timeout' ||
+    input.code === 'WOO_NETWORK_ERROR' ||
+    input.code === 'WOO_RATE_LIMITED' ||
+    normalizedMessage.includes('timeout') ||
+    normalizedMessage.includes('timed out') ||
+    normalizedMessage.includes('network') ||
+    normalizedMessage.includes('temporar')
+  );
+}
+
+function normalizeToolFailure(
+  name: string,
+  input: {
+    text: string;
+    structured: Record<string, unknown> | null;
+    content?: ToolResultContent[];
+    fallbackSource?: ToolErrorSource;
+  }
+): NormalizedToolFailure {
+  const nestedError = readNestedError(input.structured);
+  const code = typeof nestedError?.code === 'string' ? nestedError.code : undefined;
+  const type = typeof nestedError?.type === 'string' ? nestedError.type : undefined;
+  const nestedMessage = typeof nestedError?.message === 'string' ? nestedError.message.trim() : '';
+  const message = nestedMessage || input.text || 'The tool returned an error result.';
+  const source = input.fallbackSource ?? inferToolErrorSource({ code, type, message });
+
+  return {
+    tool: name,
+    ok: false,
+    text: input.text,
+    structured: input.structured,
+    content: input.content ?? [],
+    error: {
+      source,
+      message,
+      code,
+      type,
+      retryable: isRetryableToolError({ source, code, type, message }),
+    },
+  };
 }
 
 export class WooCommerceTransportService {
@@ -137,7 +238,32 @@ export class WooCommerceTransportService {
     }
   }
 
-  async callTool(name: string, args: Record<string, unknown>) {
+  async callTool(name: string, args: Record<string, unknown>): Promise<NormalizedToolResult> {
+    try {
+      return await runWooCommerceToolWithApproval({
+        actionName: name,
+        args,
+        execute: () => this.callToolRaw(name, args),
+      });
+    } catch (error) {
+      if (isApprovalGateError(error)) {
+        return normalizeToolFailure(name, {
+          text: error.message,
+          structured: {
+            error: {
+              type: error.type,
+              message: error.message,
+            },
+          },
+          fallbackSource: 'approval-gate',
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  private async callToolRaw(name: string, args: Record<string, unknown>): Promise<NormalizedToolResult> {
     const client = await this.connectClient();
 
     if (!generatedWooCommerceToolRegistry[name as keyof typeof generatedWooCommerceToolRegistry]) {
@@ -148,10 +274,20 @@ export class WooCommerceTransportService {
       throw new Error(`Tool "${name}" is not available on the connected WooCommerce transport server.`);
     }
 
-    const result = (await client.callTool({
-      name,
-      arguments: args,
-    })) as ToolCallResponse;
+    let result: ToolCallResponse;
+    try {
+      result = (await client.callTool({
+        name,
+        arguments: args,
+      })) as ToolCallResponse;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown WooCommerce transport execution error.';
+      return normalizeToolFailure(name, {
+        text: message,
+        structured: null,
+        fallbackSource: 'woocommerce-transport',
+      });
+    }
 
     if ('toolResult' in result) {
       return {
@@ -163,19 +299,20 @@ export class WooCommerceTransportService {
       };
     }
 
-    const normalizedResult = {
+    const normalizedResult: NormalizedToolSuccess = {
       tool: name,
-      ok: !result.isError,
+      ok: true,
       text: normalizeTextContent(result.content),
       structured: result.structuredContent ?? null,
       content: result.content ?? [],
     };
 
     if (result.isError) {
-      return {
-        ...normalizedResult,
-        error: normalizedResult.text || 'The tool returned an error result.',
-      };
+      return normalizeToolFailure(name, {
+        text: normalizedResult.text,
+        structured: normalizedResult.structured,
+        content: normalizedResult.content,
+      });
     }
 
     return normalizedResult;
@@ -225,5 +362,10 @@ export function getWooCommerceTransportService() {
 }
 
 export async function validateWooCommerceTransportOnStartup() {
+  if (!shouldValidateWooCommerceMcpOnStartup()) {
+    console.log('WooCommerce MCP startup validation is disabled; assistant will use lazy transport initialization.');
+    return;
+  }
+
   await wooCommerceTransportService.validateRequiredTools();
 }

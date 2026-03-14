@@ -79,6 +79,25 @@ class TelegramService {
     const bot = TelegramService.getInstance();
     return await bot.deleteMessage(chatId, messageId);
   }
+
+  static async answerCallbackQuery(
+    callbackQueryId: string,
+    options?: Omit<TelegramBot.AnswerCallbackQueryOptions, 'callback_query_id'>
+  ): Promise<boolean> {
+    const bot = TelegramService.getInstance();
+    return await bot.answerCallbackQuery({
+      callback_query_id: callbackQueryId,
+      ...(options ?? {}),
+    });
+  }
+
+  static async editMessageText(
+    message: string,
+    options: TelegramBot.EditMessageTextOptions
+  ): Promise<TelegramBot.Message | boolean> {
+    const bot = TelegramService.getInstance();
+    return await bot.editMessageText(message, options);
+  }
 }
 
 export default TelegramService;

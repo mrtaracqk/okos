@@ -1,6 +1,6 @@
-import { BaseMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
+import { AIMessage, BaseMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { Annotation, BaseCheckpointSaver, END, START, StateGraph, getConfig } from '@langchain/langgraph';
-import { catalogAgentGraph } from '../../catalog/catalog.agent';
+import { catalogAgentGraph, type WorkerRun } from '../../catalog/catalog.agent';
 import { graphCheckpointer } from '../../shared/checkpointing';
 import { extractMessageText, getLastAIMessage, getLastAIMessageText } from '../../shared/messageUtils';
 import { telegramMainGraphProgressReporter, type MainGraphProgressReporter } from '../progress';
@@ -9,6 +9,13 @@ import { delegateCatalogTool } from '../tools/delegateCatalog.tool';
 
 export const mainTools = [delegateCatalogTool];
 
+type CatalogDelegationResult = {
+  directResponse: string | null;
+  failureWorker: string | null;
+  rawText: string;
+  status: 'success' | 'partial' | 'failed';
+};
+
 export const MainGraphStateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
     reducer: (oldMessages, newMessages) => [...oldMessages, ...newMessages],
@@ -16,6 +23,10 @@ export const MainGraphStateAnnotation = Annotation.Root({
   chatId: Annotation<number>(),
   summary: Annotation<string>(),
   memory: Annotation<string>(),
+  catalogDelegation: Annotation<CatalogDelegationResult | null>({
+    reducer: (_oldValue, newValue) => newValue,
+    default: () => null,
+  }),
 });
 
 type CreateMainGraphOptions = {
@@ -36,6 +47,60 @@ const getMainRoute = async (state: typeof MainGraphStateAnnotation.State, progre
   return 'end';
 };
 
+function getCatalogDeclaredStatus(text: string) {
+  const match = text.match(/^Status:\s*(ready|partial)\b/im);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+function formatWorkerName(workerName: WorkerRun['agent']) {
+  return workerName.replace(/^run_/, '').replace(/_/g, '-');
+}
+
+function getLastFailedWorker(workerRuns: WorkerRun[]) {
+  for (let index = workerRuns.length - 1; index >= 0; index -= 1) {
+    const workerRun = workerRuns[index];
+    if (workerRun?.status === 'failed' || workerRun?.status === 'invalid') {
+      return workerRun;
+    }
+  }
+
+  return undefined;
+}
+
+function buildCatalogFailureMessage(rawText: string, failedWorker: WorkerRun) {
+  const sections = [
+    'Не удалось выполнить запрос к каталогу.',
+    `Сбой на шаге ${formatWorkerName(failedWorker.agent)}.`,
+  ];
+
+  if (failedWorker.details?.trim()) {
+    sections.push(failedWorker.details.trim());
+  } else if (rawText.trim()) {
+    sections.push(rawText.trim());
+  }
+
+  return sections.join('\n\n');
+}
+
+function buildCatalogDelegationResult(input: { rawText: string; workerRuns: WorkerRun[] }): CatalogDelegationResult {
+  const failedWorker = getLastFailedWorker(input.workerRuns);
+  if (failedWorker) {
+    return {
+      status: 'failed',
+      rawText: input.rawText,
+      failureWorker: formatWorkerName(failedWorker.agent),
+      directResponse: buildCatalogFailureMessage(input.rawText, failedWorker),
+    };
+  }
+
+  return {
+    status: getCatalogDeclaredStatus(input.rawText) === 'partial' ? 'partial' : 'success',
+    rawText: input.rawText,
+    failureWorker: null,
+    directResponse: null,
+  };
+}
+
 function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
   return async (state: typeof MainGraphStateAnnotation.State): Promise<Partial<typeof MainGraphStateAnnotation.State>> => {
     const lastMessage = getLastAIMessage(state.messages);
@@ -49,6 +114,7 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
     const userRequest = typeof toolCall.args?.userRequest === 'string' ? toolCall.args.userRequest.trim() : '';
 
     if (!userRequest) {
+      const directResponse = 'Не удалось передать запрос в catalog-agent: отсутствует обязательный аргумент userRequest.';
       return {
         messages: [
           new ToolMessage({
@@ -56,7 +122,14 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
             name: toolCall.name,
             content: 'Catalog handoff failed: missing required "userRequest" argument.',
           }),
+          new AIMessage(directResponse),
         ],
+        catalogDelegation: {
+          directResponse,
+          failureWorker: null,
+          rawText: 'Catalog handoff failed: missing required "userRequest" argument.',
+          status: 'failed',
+        },
       };
     }
 
@@ -71,17 +144,34 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
       },
       getConfig()
     );
+    const rawText = getLastAIMessageText(result.messages) || 'Catalog agent completed without a text response.';
+    const workerRuns = Array.isArray(result.workerRuns) ? result.workerRuns : [];
+    const delegationResult = buildCatalogDelegationResult({
+      rawText,
+      workerRuns,
+    });
+
+    const messages: BaseMessage[] = [
+      new ToolMessage({
+        tool_call_id: toolCall.id ?? toolCall.name,
+        name: delegateCatalogTool.name,
+        content: rawText,
+      }),
+    ];
+
+    if (delegationResult.directResponse) {
+      messages.push(new AIMessage(delegationResult.directResponse));
+    }
 
     return {
-      messages: [
-        new ToolMessage({
-          tool_call_id: toolCall.id ?? toolCall.name,
-          name: delegateCatalogTool.name,
-          content: getLastAIMessageText(result.messages) || 'Catalog agent completed without a text response.',
-        }),
-      ],
+      messages,
+      catalogDelegation: delegationResult,
     };
   };
+}
+
+function getPostCatalogRoute(state: typeof MainGraphStateAnnotation.State) {
+  return state.catalogDelegation?.directResponse ? 'end' : 'responseAgent';
 }
 
 export function createMainGraph({
@@ -97,7 +187,10 @@ export function createMainGraph({
       catalogAgent: 'catalogAgent',
       end: END,
     })
-    .addEdge('catalogAgent', 'responseAgent')
+    .addConditionalEdges('catalogAgent', getPostCatalogRoute, {
+      responseAgent: 'responseAgent',
+      end: END,
+    })
     .compile({
       checkpointer,
       name,
