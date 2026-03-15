@@ -1,5 +1,5 @@
 import { HumanMessage, isAIMessage, trimMessages } from '@langchain/core/messages';
-import { getTelegramRequestContext } from './approval/requestContext';
+import { getTelegramRequestContext } from './runtime-plugins/approval';
 import { mainGraph } from './agents/main/graphs/main.graph';
 import { telegramMainGraphProgressReporter } from './agents/main/progress';
 import { createGraphRunConfig } from './agents/shared/checkpointing';
@@ -7,24 +7,27 @@ import { CHAT_CONFIG, createOpenAITokenCounter } from './config';
 import {
   buildTelegramTraceContext,
   buildTraceAttributes,
+  buildTraceInputAttributes,
+  buildTraceOutputAttributes,
   formatTraceValue,
   runAgentSpan,
   runChainSpan,
   withTraceContext,
 } from './observability/traceContext';
+import { MimeType } from '@arizeai/openinference-semantic-conventions';
 import { RedisService } from './services/redis';
 import TelegramService from './services/telegram';
+import { openAIChatModelConfig } from './services/openAIChatModelConfig';
 
 const redisService = new RedisService();
 
 export async function handleMessage(chatId: number, text: string) {
   const requestContext = getTelegramRequestContext();
-  const runConfig = createGraphRunConfig(chatId);
+  const runConfig = createGraphRunConfig(chatId, text);
   const runThreadId =
     typeof runConfig.configurable?.thread_id === 'string' ? runConfig.configurable.thread_id : undefined;
   const traceContext = buildTelegramTraceContext({
     chatId,
-    inputText: text,
     runThreadId,
   });
 
@@ -46,7 +49,7 @@ export async function handleMessage(chatId: number, text: string) {
           const trimmedMessages = await trimMessages(state.messages, {
             maxTokens: 4096,
             strategy: 'last',
-            tokenCounter: createOpenAITokenCounter(process.env.OPENAI_MODEL_NAME || 'gpt-4o'),
+            tokenCounter: createOpenAITokenCounter(),
             startOn: 'human',
             includeSystem: true,
           });
@@ -76,30 +79,30 @@ export async function handleMessage(chatId: number, text: string) {
           );
 
           if (result.messages?.length) {
-            await runChainSpan(
+            const finalResponse = await runChainSpan(
               'main_graph.final_response',
               async () => {
                 const lastMessage = result.messages.slice(-1)[0];
-                if (!isAIMessage(lastMessage)) {
-                  return {
-                    delivered: false,
-                    reason: 'last_message_not_ai',
-                  };
-                }
-
-                const aiMessage = lastMessage.content;
                 let aiResponse: string | undefined;
 
-                if (typeof aiMessage === 'string') {
-                  aiResponse = aiMessage;
-                } else if (Array.isArray(aiMessage)) {
-                  aiResponse = (aiMessage as any[]).filter((content) => content.type === 'text')[0]?.text ?? undefined;
+                if (isAIMessage(lastMessage)) {
+                  const aiMessage = lastMessage.content;
+                  if (typeof aiMessage === 'string') {
+                    aiResponse = aiMessage;
+                  } else if (Array.isArray(aiMessage)) {
+                    aiResponse = (aiMessage as any[]).filter((content) => content.type === 'text')[0]?.text ?? undefined;
+                  }
+                }
+
+                if (!aiResponse) {
+                  aiResponse =
+                    result.catalogDelegation?.directResponse?.trim() || result.catalogDelegation?.rawText?.trim() || undefined;
                 }
 
                 if (!aiResponse) {
                   return {
                     delivered: false,
-                    reason: 'empty_ai_response',
+                    reason: isAIMessage(lastMessage) ? 'empty_ai_response' : 'last_message_not_ai',
                   };
                 }
 
@@ -108,6 +111,7 @@ export async function handleMessage(chatId: number, text: string) {
 
                 return {
                   delivered: true,
+                  responseText: aiResponse,
                   responsePreview: formatTraceValue(aiResponse, 600),
                 };
               },
@@ -124,16 +128,33 @@ export async function handleMessage(chatId: number, text: string) {
                   }),
               }
             );
+
+            return {
+              delivered: finalResponse.delivered,
+              outputText: 'responseText' in finalResponse ? finalResponse.responseText : undefined,
+            };
           }
+
+          return {
+            delivered: false,
+          };
         },
         {
-          attributes: buildTraceAttributes({
-            'input.value': text,
-            'telegram.chat_id': chatId,
-            'telegram.user_id': requestContext?.telegramUserId,
-            'telegram.username': requestContext?.telegramUsername,
-            'run.thread_id': runThreadId,
-            'transport': 'telegram',
+          attributes: {
+            ...buildTraceInputAttributes(text, 2000, MimeType.TEXT),
+            ...buildTraceAttributes({
+              'telegram.chat_id': chatId,
+              'telegram.user_id': requestContext?.telegramUserId,
+              'telegram.username': requestContext?.telegramUsername,
+              'run.thread_id': runThreadId,
+              'transport': 'telegram',
+            }),
+          },
+          mapResultAttributes: (turnResult) => ({
+            ...buildTraceAttributes({
+              'response.delivered': turnResult.delivered,
+            }),
+            ...(turnResult.outputText ? buildTraceOutputAttributes(turnResult.outputText, 2000, MimeType.TEXT) : {}),
           }),
         }
       )
@@ -141,11 +162,11 @@ export async function handleMessage(chatId: number, text: string) {
   } catch (error: any) {
     console.error('Error processing message:', error);
     if (error.status === 429) {
-      await TelegramService.sendMessage(chatId, 'You have exceeded the rate limit. Please try again later.');
+      await TelegramService.sendMessage(chatId, 'Вы превысили лимит запросов. Попробуйте позже.');
       return;
     }
 
-    await TelegramService.sendMessage(chatId, 'Sorry, there was an error processing your message.');
+    await TelegramService.sendMessage(chatId, 'Не удалось обработать ваше сообщение.');
   } finally {
     await telegramMainGraphProgressReporter.onRunComplete({ chatId });
   }
@@ -154,9 +175,29 @@ export async function handleMessage(chatId: number, text: string) {
 export async function handleClearHistory(chatId: number, onlyMessages: boolean = false) {
   try {
     await redisService.clearAll(chatId, onlyMessages);
-    await TelegramService.sendMessage(chatId, 'Your chat history has been cleared.');
+    await TelegramService.sendMessage(chatId, 'История чата очищена.');
   } catch (error) {
     console.error('Error clearing chat history:', error);
-    await TelegramService.sendMessage(chatId, 'Sorry, there was an error clearing your data.');
+    await TelegramService.sendMessage(chatId, 'Не удалось очистить ваши данные.');
+  }
+}
+
+export async function handleSetOpenAIModel(chatId: number, rawModelName?: string) {
+  const currentModelName = openAIChatModelConfig.getCurrentModelName();
+
+  if (!rawModelName?.trim()) {
+    await TelegramService.sendMessage(
+      chatId,
+      `Текущая OpenAI-модель: ${currentModelName}\nИспользование: /set_model <model>\nПоддерживаются форматы: gpt-5-mini и openai/gpt-5-mini`
+    );
+    return;
+  }
+
+  try {
+    const updatedModelName = openAIChatModelConfig.setCurrentModelName(rawModelName);
+    await TelegramService.sendMessage(chatId, `OpenAI-модель переключена на: ${updatedModelName}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Не удалось изменить OpenAI-модель.';
+    await TelegramService.sendMessage(chatId, message);
   }
 }

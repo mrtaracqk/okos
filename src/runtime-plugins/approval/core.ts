@@ -75,7 +75,7 @@ export class ApprovalGate<TContext extends Record<string, unknown>> {
     if (!input.context) {
       throw new ApprovalGateError(
         'approval_unavailable',
-        `Action "${input.actionName}" requires approval, but the runtime request context is unavailable.`
+        `Действие "${input.actionName}" требует подтверждения, но runtime-контекст запроса недоступен.`
       );
     }
 
@@ -111,19 +111,19 @@ export class ApprovalGate<TContext extends Record<string, unknown>> {
       });
     } catch (error) {
       this.discardPendingApproval(approvalId);
-      const message = error instanceof Error ? error.message : 'Failed to send the approval request.';
+      const message = error instanceof Error ? error.message : 'Не удалось отправить запрос на подтверждение.';
       throw new ApprovalGateError('approval_unavailable', message);
     }
 
     const completion = await completionPromise;
     if (completion === 'rejected') {
-      throw new ApprovalGateError('approval_rejected', `Action "${input.actionName}" was rejected by the operator.`);
+      throw new ApprovalGateError('approval_rejected', `Действие "${input.actionName}" было отклонено оператором.`);
     }
 
     if (completion === 'timeout') {
       throw new ApprovalGateError(
         'approval_timeout',
-        `Action "${input.actionName}" timed out while waiting for operator approval.`
+        `Истекло время ожидания подтверждения действия "${input.actionName}" от оператора.`
       );
     }
 

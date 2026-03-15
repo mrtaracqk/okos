@@ -3,7 +3,7 @@ import {
   getTelegramRequestContext,
   runWithTelegramRequestContext,
   type TelegramRequestContext,
-} from './requestContext';
+} from './request-context';
 
 describe('telegram request context', () => {
   it('returns undefined outside of the async local scope', () => {

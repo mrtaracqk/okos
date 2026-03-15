@@ -1,6 +1,16 @@
 import { BaseMessage, SystemMessage, ToolMessage, isAIMessage } from '@langchain/core/messages';
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
-import { buildTraceAttributes, formatTraceText, formatTraceValue, runAgentSpan, runToolSpan } from '../../observability/traceContext';
+import {
+  addTraceEvent,
+  buildTraceAttributes,
+  buildTraceInputAttributes,
+  buildTraceOutputAttributes,
+  formatTraceValue,
+  runAgentSpan,
+  runLlmSpan,
+  runToolSpan,
+} from '../../observability/traceContext';
+import { DISABLE_RESPONSE_TRUNCATION_METADATA_KEY } from './toolResponsePostprocess';
 
 export type ToolRun = {
   toolName: string;
@@ -25,12 +35,17 @@ export const ToolLoopStateAnnotation = Annotation.Root({
     reducer: (oldRuns, newRuns) => [...oldRuns, ...newRuns],
     default: () => [],
   }),
+  shouldExitAfterTools: Annotation<boolean>({
+    reducer: (_, newValue) => newValue,
+    default: () => false,
+  }),
 });
 
 type CreateToolLoopGraphOptions = {
   model: any;
   tools: any[];
   systemPrompt: () => string;
+  finalToolNames?: string[];
 };
 
 type WorkerTool = {
@@ -112,13 +127,55 @@ function dedupeToolPayload(value: Record<string, unknown>): Record<string, unkno
   return payload;
 }
 
+function truncateString(value: string, limit: number) {
+  return value.length > limit ? value.slice(0, limit) : value;
+}
+
+function truncateStringsDeep(value: unknown, limit: number): unknown {
+  if (typeof value === 'string') {
+    return truncateString(value, limit);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => truncateStringsDeep(item, limit));
+  }
+
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nestedValue]) => [key, truncateStringsDeep(nestedValue, limit)])
+  );
+}
+
 function serializeToolPayload(value: unknown): string {
   if (typeof value === 'string') {
     return value;
   }
 
-  const serializableValue = isRecord(value) ? dedupeToolPayload(value) : value;
+  const shouldTruncateResponse =
+    !isRecord(value) || value[DISABLE_RESPONSE_TRUNCATION_METADATA_KEY] !== true;
+  const dedupedValue = isRecord(value) ? dedupeToolPayload(value) : value;
+  const serializableValue = shouldTruncateResponse ? truncateStringsDeep(dedupedValue, 300) : dedupedValue;
   return safeSerialize(serializableValue) ?? String(serializableValue);
+}
+
+function extractCompactToolMessagePayload(value: unknown): unknown {
+  if (!isRecord(value) || value.ok === false) {
+    return value;
+  }
+
+  const structured = isRecord(value.structured) ? value.structured : null;
+  if (!structured || !Object.prototype.hasOwnProperty.call(structured, 'result')) {
+    return value;
+  }
+
+  return structured.result;
+}
+
+function serializeToolMessagePayload(value: unknown): string {
+  return serializeToolPayload(extractCompactToolMessagePayload(value));
 }
 
 function normalizeToolRun(toolName: string, args: Record<string, unknown>, payload: unknown): ToolRun {
@@ -177,14 +234,30 @@ function buildFailedToolPayload(toolName: string, message: string, source: strin
   };
 }
 
-export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLoopGraphOptions) {
+export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames = [] }: CreateToolLoopGraphOptions) {
   const toolsByName = new Map<string, WorkerTool>(tools.map((tool) => [tool.name, tool]));
+  const finalToolNameSet = new Set(finalToolNames);
 
   const agentNode = async (state: typeof ToolLoopStateAnnotation.State) => {
     return runAgentSpan(
       'worker.tool_loop.agent',
       async () => {
-        const response = await model.bindTools(tools).invoke([new SystemMessage(systemPrompt()), ...state.messages]);
+        const runnableModel = model.bindTools(tools);
+        const llmMessages = [new SystemMessage(systemPrompt()), ...state.messages];
+        const response = await runLlmSpan('worker.tool_loop.agent.llm', async () => runnableModel.invoke(llmMessages), {
+          inputMessages: llmMessages,
+          model: runnableModel,
+        });
+        const toolCalls = Array.isArray(response.tool_calls) ? response.tool_calls : [];
+
+        addTraceEvent('worker.tool_calls_generated', {
+          'worker.tool_call_count': toolCalls.length,
+          'worker.tool_call_names': toolCalls
+            .map((toolCall: { name?: string }) => toolCall.name)
+            .filter((name: string | undefined): name is string => typeof name === 'string')
+            .join(', '),
+          status: toolCalls.length > 0 ? 'tool_calls' : 'text_response',
+        });
 
         return {
           messages: [response],
@@ -209,6 +282,7 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
 
     const messages: ToolMessage[] = [];
     const toolRuns: ToolRun[] = [];
+    const shouldExitAfterTools = lastMessage.tool_calls.some((toolCall) => finalToolNameSet.has(toolCall.name));
 
     for (const toolCall of lastMessage.tool_calls) {
       const tool = toolsByName.get(toolCall.name);
@@ -226,12 +300,15 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
               'tool_not_registered'
             ),
           {
-            attributes: buildTraceAttributes({
-              'tool.name': toolCall.name,
-              'tool.call_id': toolCallId,
-              'tool.args': formatTraceValue(args, 1000),
-              'tool.status': 'failed',
-            }),
+            attributes: {
+              ...buildTraceAttributes({
+                'tool.name': toolCall.name,
+                'tool.call_id': toolCallId,
+                'tool.args': formatTraceValue(args, 1000),
+                'tool.status': 'failed',
+              }),
+              ...buildTraceInputAttributes(args, 1000),
+            },
             statusMessage: () => `tool "${toolCall.name}" is not registered in the worker loop`,
           }
         );
@@ -241,7 +318,7 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
           new ToolMessage({
             tool_call_id: toolCallId,
             name: toolCall.name,
-            content: serializeToolPayload(payload),
+            content: serializeToolMessagePayload(payload),
           })
         );
         continue;
@@ -254,20 +331,25 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
           'worker.tool_call',
           async () => tool.invoke(args),
           {
-            attributes: buildTraceAttributes({
-              'tool.name': toolName,
-              'tool.call_id': toolCallId,
-              'tool.args': formatTraceValue(args, 1000),
-            }),
+            attributes: {
+              ...buildTraceAttributes({
+                'tool.name': toolName,
+                'tool.call_id': toolCallId,
+                'tool.args': formatTraceValue(args, 1000),
+              }),
+              ...buildTraceInputAttributes(args, 1000),
+            },
             mapResultAttributes: (result) => {
               const normalizedRun = normalizeToolRun(toolName, args, result);
-              return buildTraceAttributes({
-                'tool.status': normalizedRun.status,
-                'error.type': normalizedRun.error?.type,
-                'error.code': normalizedRun.error?.code,
-                'error.retryable': normalizedRun.error?.retryable,
-                'output.value': formatTraceText(normalizedRun.text, 1200),
-              });
+              return {
+                ...buildTraceAttributes({
+                  'tool.status': normalizedRun.status,
+                  'error.type': normalizedRun.error?.type,
+                  'error.code': normalizedRun.error?.code,
+                  'error.retryable': normalizedRun.error?.retryable,
+                }),
+                ...buildTraceOutputAttributes(normalizedRun.text, 1200),
+              };
             },
             statusMessage: (result) => {
               const normalizedRun = normalizeToolRun(toolName, args, result);
@@ -281,7 +363,7 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
           new ToolMessage({
             tool_call_id: toolCallId,
             name: toolCall.name,
-            content: serializeToolPayload(payload),
+            content: serializeToolMessagePayload(payload),
           })
         );
       } catch (error) {
@@ -293,7 +375,7 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
           new ToolMessage({
             tool_call_id: toolCallId,
             name: toolCall.name,
-            content: serializeToolPayload(payload),
+            content: serializeToolMessagePayload(payload),
           })
         );
       }
@@ -302,6 +384,7 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
     return {
       messages,
       toolRuns,
+      shouldExitAfterTools,
     };
   };
 
@@ -312,6 +395,9 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
       : 'end';
   };
 
+  const getPostToolsRoute = (state: typeof ToolLoopStateAnnotation.State) =>
+    state.shouldExitAfterTools ? 'end' : 'agent';
+
   return new StateGraph(ToolLoopStateAnnotation)
     .addNode('agent', agentNode)
     .addNode('tools', toolsNode)
@@ -320,5 +406,8 @@ export function createToolLoopGraph({ model, tools, systemPrompt }: CreateToolLo
       callTools: 'tools',
       end: END,
     })
-    .addEdge('tools', 'agent');
+    .addConditionalEdges('tools', getPostToolsRoute, {
+      agent: 'agent',
+      end: END,
+    });
 }

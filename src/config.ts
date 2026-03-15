@@ -2,6 +2,7 @@ import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { ChatGroq } from '@langchain/groq';
 import { ChatOpenAI } from '@langchain/openai';
 import { RedisService } from './services/redis';
+import { openAIChatModelConfig } from './services/openAIChatModelConfig';
 
 export const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 export const redisService = new RedisService();
@@ -16,6 +17,7 @@ type ModelProvider = 'google' | 'groq' | 'openai';
 export const MODEL_PROVIDER = (process.env.MODEL_PROVIDER || 'openai') as ModelProvider;
 export const MODEL_UTILITY_PROVIDER = (process.env.MODEL_UTILITY_PROVIDER || MODEL_PROVIDER) as ModelProvider;
 export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL?.trim() || undefined;
+type ChatModelInstance = ChatOpenAI | ChatGoogleGenerativeAI | ChatGroq;
 
 function createOpenAIModel(modelName: string, temperature: number) {
   return new ChatOpenAI({
@@ -34,7 +36,7 @@ function createOpenAIModel(modelName: string, temperature: number) {
   });
 }
 
-export function createOpenAITokenCounter(modelName = 'gpt-4o') {
+export function createOpenAITokenCounter(modelName = openAIChatModelConfig.getCurrentModelName()) {
   return new ChatOpenAI({
     ...(process.env.OPENAI_API_KEY ? { apiKey: process.env.OPENAI_API_KEY } : {}),
     modelName,
@@ -51,12 +53,14 @@ export function createOpenAITokenCounter(modelName = 'gpt-4o') {
 function createChatModel(type: 'chat' | 'utility') {
   const temperature = type === 'chat' ? 0.5 : 0;
   const provider = type === 'utility' ? MODEL_UTILITY_PROVIDER || MODEL_PROVIDER : MODEL_PROVIDER;
-  let chatModel: ChatOpenAI | ChatGoogleGenerativeAI | ChatGroq;
+  let chatModel: ChatModelInstance;
 
   switch (provider) {
     case 'openai':
       chatModel = createOpenAIModel(
-        type === 'chat' ? process.env.OPENAI_MODEL_NAME || 'gpt-4o' : process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
+        type === 'chat'
+          ? openAIChatModelConfig.getCurrentModelName()
+          : process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
         temperature
       );
       break;
@@ -78,7 +82,9 @@ function createChatModel(type: 'chat' | 'utility') {
       break;
     default:
       chatModel = createOpenAIModel(
-        type === 'chat' ? process.env.OPENAI_MODEL_NAME || 'gpt-4o' : process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
+        type === 'chat'
+          ? openAIChatModelConfig.getCurrentModelName()
+          : process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
         temperature
       );
       break;
@@ -87,7 +93,28 @@ function createChatModel(type: 'chat' | 'utility') {
   return chatModel;
 }
 
-export const chatModel = createChatModel('chat');
+function getChatModelInstance() {
+  return createChatModel('chat');
+}
+
+function getModelName(model: ChatModelInstance) {
+  return 'modelName' in model ? model.modelName : model.model;
+}
+
+export const chatModel = {
+  bindTools(tools: any[]) {
+    return getChatModelInstance().bindTools(tools);
+  },
+  get provider() {
+    return MODEL_PROVIDER;
+  },
+  get modelName() {
+    return getModelName(getChatModelInstance());
+  },
+  get model() {
+    return getModelName(getChatModelInstance());
+  },
+};
 export const classifierModel = createChatModel('utility');
 
 export const CHAT_CONFIG = {

@@ -8,7 +8,7 @@ type CatalogPlaybook = {
 const catalogPlaybooks: CatalogPlaybook[] = [
   {
     id: 'add-simple-product',
-    summary: 'Create a draft simple product after resolving its category.',
+    summary: 'Создать простой товар в статусе draft.',
     workerOrder: ['category-worker', 'product-worker'],
     instructions: `# Создание простого товара
 
@@ -77,7 +77,7 @@ const catalogPlaybooks: CatalogPlaybook[] = [
   },
   {
     id: 'add-variable-product',
-    summary: 'Create a draft variable product with attributes and generated variations.',
+    summary: 'Создать вариативный товар в статусе draft',
     workerOrder: ['category-worker', 'attribute-worker', 'product-worker', 'variation-worker'],
     instructions: `# Создание вариативного товара
 
@@ -187,8 +187,8 @@ export function renderPlaybookIndexForPrompt() {
     .map((playbook) =>
       [
         `Playbook: ${playbook.id}`,
-        `Summary: ${playbook.summary}`,
-        `Worker order: ${playbook.workerOrder.join(' -> ')}`,
+        `Сводка: ${playbook.summary}`,
+        `Порядок воркеров: ${playbook.workerOrder.join(' -> ')}`,
       ].join('\n')
     )
     .join('\n\n---\n\n');
@@ -206,9 +206,9 @@ export function getCatalogPlaybookInstructions(playbookId: string) {
 
   return [
     `Playbook: ${playbook.id}`,
-    `Summary: ${playbook.summary}`,
-    `Worker order: ${playbook.workerOrder.join(' -> ')}`,
-    'Canonical instructions:',
+    `Сводка: ${playbook.summary}`,
+    `Порядок воркеров: ${playbook.workerOrder.join(' -> ')}`,
+    'Канонические инструкции:',
     playbook.instructions.trim(),
   ].join('\n');
 }

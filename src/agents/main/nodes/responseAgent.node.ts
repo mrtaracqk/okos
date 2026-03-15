@@ -1,6 +1,6 @@
 import { SystemMessage } from '@langchain/core/messages';
 import { chatModel } from '../../../config';
-import { buildTraceAttributes, runAgentSpan } from '../../../observability/traceContext';
+import { buildTraceAttributes, runAgentSpan, runLlmSpan } from '../../../observability/traceContext';
 import { PROMPTS } from '../../../prompts';
 import { MainGraphStateAnnotation, mainTools } from '../graphs/main.graph';
 
@@ -20,7 +20,11 @@ Chat ID: ${chatId}`;
       systemPrompt += '\n</additional-context>\n';
 
       const systemMessage = new SystemMessage(systemPrompt);
-      const response = await model.invoke([systemMessage, ...messages]);
+      const llmMessages = [systemMessage, ...messages];
+      const response = await runLlmSpan('main_graph.response_agent.llm', async () => model.invoke(llmMessages), {
+        inputMessages: llmMessages,
+        model,
+      });
 
       return {
         messages: [response],

@@ -4,9 +4,16 @@ import {
   generatedWooCommerceToolRegistry,
   generatedWooCommerceWorkerToolsets,
 } from '../generated/woocommerceTools.generated';
-import { isApprovalGateError } from '../approval/core';
+import { DISABLE_RESPONSE_TRUNCATION_METADATA_KEY } from '../agents/shared/toolResponsePostprocess';
+import { isApprovalGateError } from '../runtime-plugins/approval';
 import { MCP_SERVERS, shouldValidateWooCommerceMcpOnStartup } from '../mcpServers';
-import { buildTraceAttributes, formatTraceText, formatTraceValue, runToolSpan } from '../observability/traceContext';
+import {
+  buildTraceAttributes,
+  buildTraceInputAttributes,
+  buildTraceOutputAttributes,
+  formatTraceValue,
+  runToolSpan,
+} from '../observability/traceContext';
 import { runWooCommerceToolWithApproval } from './toolApproval';
 
 type ToolResultContent =
@@ -66,6 +73,10 @@ type NormalizedToolFailure = {
 };
 
 type NormalizedToolResult = NormalizedToolSuccess | NormalizedToolFailure;
+
+type CallToolOptions = {
+  truncateResponse?: boolean;
+};
 
 function normalizeTextContent(content: ToolResultContent[] | undefined) {
   if (!Array.isArray(content) || content.length === 0) {
@@ -147,7 +158,7 @@ function normalizeToolFailure(
   const code = typeof nestedError?.code === 'string' ? nestedError.code : undefined;
   const type = typeof nestedError?.type === 'string' ? nestedError.type : undefined;
   const nestedMessage = typeof nestedError?.message === 'string' ? nestedError.message.trim() : '';
-  const message = nestedMessage || input.text || 'The tool returned an error result.';
+  const message = nestedMessage || input.text || 'Инструмент вернул результат с ошибкой.';
   const source = input.fallbackSource ?? inferToolErrorSource({ code, type, message });
 
   return {
@@ -164,6 +175,23 @@ function normalizeToolFailure(
       retryable: isRetryableToolError({ source, code, type, message }),
     },
   };
+}
+
+function withResponseTruncationPreference<T extends NormalizedToolResult>(
+  result: T,
+  options?: CallToolOptions
+): T {
+  if (options?.truncateResponse !== false) {
+    return result;
+  }
+
+  Object.defineProperty(result, DISABLE_RESPONSE_TRUNCATION_METADATA_KEY, {
+    value: true,
+    enumerable: false,
+    configurable: true,
+  });
+
+  return result;
 }
 
 export class WooCommerceTransportService {
@@ -239,46 +267,59 @@ export class WooCommerceTransportService {
     }
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<NormalizedToolResult> {
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    options?: CallToolOptions
+  ): Promise<NormalizedToolResult> {
     return runToolSpan(
       'woocommerce_transport.call_tool',
       async () => {
         try {
-          return await runWooCommerceToolWithApproval({
+          const result = await runWooCommerceToolWithApproval({
             actionName: name,
             args,
             execute: () => this.callToolRaw(name, args),
           });
+          return withResponseTruncationPreference(result, options);
         } catch (error) {
           if (isApprovalGateError(error)) {
-            return normalizeToolFailure(name, {
-              text: error.message,
-              structured: {
-                error: {
-                  type: error.type,
-                  message: error.message,
+            return withResponseTruncationPreference(
+              normalizeToolFailure(name, {
+                text: error.message,
+                structured: {
+                  error: {
+                    type: error.type,
+                    message: error.message,
+                  },
                 },
-              },
-              fallbackSource: 'approval-gate',
-            });
+                fallbackSource: 'approval-gate',
+              }),
+              options
+            );
           }
 
           throw error;
         }
       },
       {
-        attributes: buildTraceAttributes({
-          'tool.name': name,
-          'tool.args': formatTraceValue(args, 1200),
-        }),
+        attributes: {
+          ...buildTraceAttributes({
+            'tool.name': name,
+            'tool.args': formatTraceValue(args, 1200),
+          }),
+          ...buildTraceInputAttributes(args, 1200),
+        },
         mapResultAttributes: (result) =>
-          buildTraceAttributes({
-            'tool.status': result.ok ? 'completed' : 'failed',
-            'error.source': result.ok ? undefined : result.error.source,
-            'error.type': result.ok ? undefined : result.error.type,
-            'error.code': result.ok ? undefined : result.error.code,
-            'error.retryable': result.ok ? undefined : result.error.retryable,
-            'output.value': formatTraceText(result.text, 1200),
+          ({
+            ...buildTraceAttributes({
+              'tool.status': result.ok ? 'completed' : 'failed',
+              'error.source': result.ok ? undefined : result.error.source,
+              'error.type': result.ok ? undefined : result.error.type,
+              'error.code': result.ok ? undefined : result.error.code,
+              'error.retryable': result.ok ? undefined : result.error.retryable,
+            }),
+            ...buildTraceOutputAttributes(result.text, 1200),
           }),
         statusMessage: (result) => (result.ok ? undefined : result.error.message),
       }
@@ -289,11 +330,11 @@ export class WooCommerceTransportService {
     const client = await this.connectClient();
 
     if (!generatedWooCommerceToolRegistry[name as keyof typeof generatedWooCommerceToolRegistry]) {
-      throw new Error(`Tool "${name}" is not part of the generated WooCommerce registry.`);
+      throw new Error(`Инструмент "${name}" отсутствует в сгенерированном реестре WooCommerce.`);
     }
 
     if (this.availableTools && !this.availableTools.has(name)) {
-      throw new Error(`Tool "${name}" is not available on the connected WooCommerce transport server.`);
+      throw new Error(`Инструмент "${name}" недоступен на подключённом WooCommerce transport-сервере.`);
     }
 
     let result: ToolCallResponse;
@@ -303,7 +344,7 @@ export class WooCommerceTransportService {
         arguments: args,
       })) as ToolCallResponse;
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown WooCommerce transport execution error.';
+      const message = error instanceof Error ? error.message : 'Неизвестная ошибка выполнения WooCommerce transport.';
       return normalizeToolFailure(name, {
         text: message,
         structured: null,
@@ -385,7 +426,7 @@ export function getWooCommerceTransportService() {
 
 export async function validateWooCommerceTransportOnStartup() {
   if (!shouldValidateWooCommerceMcpOnStartup()) {
-    console.log('WooCommerce MCP startup validation is disabled; assistant will use lazy transport initialization.');
+    console.log('Проверка WooCommerce MCP при старте отключена; assistant использует ленивую инициализацию transport.');
     return;
   }
 

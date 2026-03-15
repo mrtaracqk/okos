@@ -1,8 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { generatedWooCommerceToolRegistry } from '../generated/woocommerceTools.generated';
-import { ApprovalGate } from '../approval/core';
-import { getTelegramRequestContext, type TelegramRequestContext } from '../approval/requestContext';
-import { TelegramApprovalAdapter } from '../approval/telegramAdapter';
+import { ApprovalGate, getTelegramRequestContext, TelegramApprovalAdapter, type TelegramRequestContext } from '../runtime-plugins/approval';
 
 const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 const approvalTimeoutMs = Number(process.env.WOOCOMMERCE_APPROVAL_TIMEOUT_MS || DEFAULT_APPROVAL_TIMEOUT_MS);
@@ -16,6 +14,7 @@ const APPROVAL_EXEMPT_WOOCOMMERCE_ACTIONS = new Set<string>([
   'wc.v3.products_categories_list',
   'wc.v3.products_categories_read',
   'wc.v3.products_duplicate_create',
+  'wc.v3.products_read',
   'wc.v3.products_list',
   'wc.v3.products_variations_list',
   'wc.v3.products_variations_read'
@@ -27,7 +26,7 @@ const unknownApprovalExemptActions = [...APPROVAL_EXEMPT_WOOCOMMERCE_ACTIONS].fi
 
 if (unknownApprovalExemptActions.length > 0) {
   throw new Error(
-    `Unknown WooCommerce approval-exempt actions: ${unknownApprovalExemptActions.join(', ')}`
+    `Неизвестные WooCommerce-действия, исключённые из approval: ${unknownApprovalExemptActions.join(', ')}`
   );
 }
 

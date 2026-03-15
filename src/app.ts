@@ -2,8 +2,8 @@ import './observability/phoenix';
 import { html } from '@elysiajs/html';
 import { Elysia } from 'elysia';
 import TelegramBot from 'node-telegram-bot-api';
-import { runWithTelegramRequestContext, type TelegramRequestContext } from './approval/requestContext';
-import { handleClearHistory, handleMessage } from './handlers';
+import { runWithTelegramRequestContext, type TelegramRequestContext } from './runtime-plugins/approval';
+import { handleClearHistory, handleMessage, handleSetOpenAIModel } from './handlers';
 import MessageQueueService, { MessagePayload } from './services/messageQueue';
 import { RedisService } from './services/redis';
 import TelegramService from './services/telegram';
@@ -50,6 +50,20 @@ function buildTelegramRequestContext(input: {
   };
 }
 
+function parseTelegramCommand(text: string) {
+  if (!text.startsWith('/')) {
+    return null;
+  }
+
+  const [commandToken, ...argTokens] = text.trim().split(/\s+/);
+  const command = commandToken.slice(1).split('@')[0] || '';
+
+  return {
+    command,
+    args: argTokens.join(' ').trim(),
+  };
+}
+
 /**
  * Authentication guard function to check if a user is authorized
  * @param username The Telegram username to check
@@ -71,12 +85,15 @@ async function authGuard(username: string | undefined, chatId: number, userInput
   // Check if userInput is the token
   if (username && userInput && userInput === OKOS_TOKEN) {
     await redisService.addAuthorizedUser(username);
-    await bot.sendMessage(chatId, 'You have been authorized to use this bot. Welcome!');
+    await bot.sendMessage(chatId, 'Доступ к боту выдан.');
     return false;
   }
 
   // User is not authorized, send authentication message
-  await bot.sendMessage(chatId, 'You are not authorized to use this bot. Please enter the access token to continue. Make sure you have set a Telegram Username before enter it.');
+  await bot.sendMessage(
+    chatId,
+    'У вас нет доступа к этому боту. Чтобы продолжить, отправьте токен доступа. Перед этим убедитесь, что у вас установлен Telegram Username.'
+  );
   return false;
 }
 
@@ -115,13 +132,13 @@ new Elysia()
       const botUser = await bot.getMe();
 
       return renderHtml(`
-      <a href="https://t.me/${botUser.username}">${botUser.username}</a> is online!<br />Mode: ${
+      <a href="https://t.me/${botUser.username}">${botUser.username}</a> в сети.<br />Режим: ${
         isPolling ? 'Polling' : 'Webhook'
       }
       `);
     } catch (error) {
       console.error('Error in root route:', error);
-      return renderHtml('Bot is starting up. Please try again in a moment.');
+      return renderHtml('Бот запускается. Попробуйте ещё раз через несколько секунд.');
     }
   })
   .get('/healthz', () => ({
@@ -138,10 +155,11 @@ new Elysia()
 // Set up command handlers
 bot
   .setMyCommands([
-    { command: 'clear_messages', description: 'Clear your chat history' },
-    { command: 'clear_all', description: 'Clear your chat history' },
-    { command: 'list_users', description: 'List all authorized users (admin only)' },
-    { command: 'remove_user', description: 'Remove a user from authorized list (admin only)' },
+    { command: 'clear_messages', description: 'Очистить историю сообщений' },
+    { command: 'clear_all', description: 'Очистить историю чата' },
+    { command: 'list_users', description: 'Показать авторизованных пользователей' },
+    { command: 'remove_user', description: 'Удалить пользователя из авторизованных' },
+    { command: 'set_model', description: 'Сменить OpenAI-модель' },
   ])
   .catch((error) => {
     console.error('Error setting commands:', error);
@@ -160,34 +178,54 @@ bot.on('text', async (msg) => {
     return;
   }
 
+  const command = parseTelegramCommand(text);
+
   // Check for commands
-  if (text === '/clear_messages') {
+  if (command?.command === 'clear_messages') {
     // Allow commands even for unauthorized users
-    handleClearHistory(chatId, true);
+    await handleClearHistory(chatId, true);
     return;
-  } else if (text === '/clear_all') {
+  } else if (command?.command === 'clear_all') {
     // Allow commands even for unauthorized users
-    handleClearHistory(chatId, false);
+    await handleClearHistory(chatId, false);
     return;
-  } else if (text === '/list_users' && username === OKOS_ADMIN_USERNAME) {
+  } else if (command?.command === 'list_users') {
+    if (username !== OKOS_ADMIN_USERNAME) {
+      await bot.sendMessage(chatId, 'Команда доступна только администратору.');
+      return;
+    }
+
     // Admin command to list all authorized users
     const users = await redisService.getAuthorizedUsers();
     if (users.length === 0) {
-      await bot.sendMessage(chatId, 'No authorized users found.');
+      await bot.sendMessage(chatId, 'Авторизованные пользователи не найдены.');
     } else {
-      await bot.sendMessage(chatId, `Authorized users:\n${users.join('\n')}`);
+      await bot.sendMessage(chatId, `Авторизованные пользователи:\n${users.join('\n')}`);
     }
     return;
-  } else if (text.startsWith('/remove_user') && username === OKOS_ADMIN_USERNAME) {
+  } else if (command?.command === 'remove_user') {
+    if (username !== OKOS_ADMIN_USERNAME) {
+      await bot.sendMessage(chatId, 'Команда доступна только администратору.');
+      return;
+    }
+
     // Admin command to remove a user
-    const targetUsername = text.substring('/remove_user '.length).trim();
+    const targetUsername = command.args;
 
     if (targetUsername) {
       await redisService.removeAuthorizedUser(targetUsername);
-      await bot.sendMessage(chatId, `User @${targetUsername} has been removed from authorized users.`);
+      await bot.sendMessage(chatId, `Пользователь @${targetUsername} удалён из списка авторизованных.`);
     } else {
-      await bot.sendMessage(chatId, 'Please specify a username to remove. Usage: /remove_user username');
+      await bot.sendMessage(chatId, 'Укажите username для удаления. Использование: /remove_user username');
     }
+    return;
+  } else if (command?.command === 'set_model') {
+    if (username !== OKOS_ADMIN_USERNAME) {
+      await bot.sendMessage(chatId, 'Команда доступна только администратору.');
+      return;
+    }
+
+    await handleSetOpenAIModel(chatId, command.args);
     return;
   }
 
@@ -198,7 +236,7 @@ bot.on('text', async (msg) => {
   }
 
   if (!requestContext) {
-    await bot.sendMessage(chatId, 'Unable to process this message because the Telegram runtime context is missing.');
+    await bot.sendMessage(chatId, 'Не удалось обработать сообщение: отсутствует runtime-контекст Telegram.');
     return;
   }
 
@@ -222,7 +260,7 @@ bot.on('photo', async (msg) => {
     return;
   }
 
-  await bot.sendMessage(chatId, 'Image messages are no longer supported. Please send a text request.');
+  await bot.sendMessage(chatId, 'Сообщения с изображениями больше не поддерживаются. Отправьте текстовый запрос.');
 });
 
 bot.on('sticker', async (msg) => {
@@ -243,7 +281,7 @@ bot.on('sticker', async (msg) => {
 
   if (emoji) {
     if (!requestContext) {
-      await bot.sendMessage(chatId, 'Unable to process this message because the Telegram runtime context is missing.');
+      await bot.sendMessage(chatId, 'Не удалось обработать сообщение: отсутствует runtime-контекст Telegram.');
       return;
     }
 

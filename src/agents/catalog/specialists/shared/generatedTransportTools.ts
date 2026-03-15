@@ -5,8 +5,8 @@ import {
   generatedWooCommerceWorkerToolsets,
   type GeneratedWooCommerceToolName,
   type GeneratedWooCommerceWorkerName,
-} from '../../../generated/woocommerceTools.generated';
-import { getWooCommerceTransportService } from '../../../services/woocommerceTransport';
+} from '../../../../generated/woocommerceTools.generated';
+import { getWooCommerceTransportService } from '../../../../services/woocommerceTransport';
 
 type JsonSchemaObject = {
   type?: string | string[];
@@ -23,6 +23,8 @@ type JsonSchemaObject = {
 type GeneratedTransportTool = ReturnType<typeof tool> & {
   actualToolName: GeneratedWooCommerceToolName;
 };
+
+const RESPONSE_TRUNCATION_FLAG = 'disableResponseTruncation';
 
 function buildModelSafeToolNameMap() {
   const toolNames = Object.keys(generatedWooCommerceToolRegistry) as GeneratedWooCommerceToolName[];
@@ -137,12 +139,30 @@ function buildZodSchema(schema: JsonSchemaObject): z.ZodTypeAny {
 
 function buildInputSchema(toolName: GeneratedWooCommerceToolName) {
   const spec = generatedWooCommerceToolRegistry[toolName];
-  return buildZodSchema((spec.inputSchema ?? { type: 'object', additionalProperties: true }) as unknown as JsonSchemaObject);
+  const baseSchema = (spec.inputSchema ?? {
+    type: 'object',
+    additionalProperties: true,
+  }) as unknown as JsonSchemaObject;
+
+  if (baseSchema.type !== 'object') {
+    return buildZodSchema(baseSchema);
+  }
+
+  return buildZodSchema({
+    ...baseSchema,
+    properties: {
+      ...(baseSchema.properties ?? {}),
+      [RESPONSE_TRUNCATION_FLAG]: {
+        type: 'boolean',
+        description: 'Отключить стандартное сокращение длинных строк в payload ответа инструмента.',
+      },
+    },
+  });
 }
 
 function buildToolDescription(toolName: GeneratedWooCommerceToolName) {
   const spec = generatedWooCommerceToolRegistry[toolName];
-  return spec.description || `Execute ${toolName}.`;
+  return spec.description || `Выполни ${toolName}.`;
 }
 
 export function createGeneratedTransportTools(workerName: GeneratedWooCommerceWorkerName) {
@@ -151,10 +171,15 @@ export function createGeneratedTransportTools(workerName: GeneratedWooCommerceWo
   return generatedWooCommerceWorkerToolsets[workerName].map((toolName) => {
     const generatedTool = tool(
       async (args: Record<string, unknown>) => {
-        return transportService.callTool(toolName, args ?? {});
+        const normalizedArgs = args ?? {};
+        const disableResponseTruncation = normalizedArgs[RESPONSE_TRUNCATION_FLAG] === true;
+        const { [RESPONSE_TRUNCATION_FLAG]: _ignoredResponseTruncationFlag, ...transportArgs } = normalizedArgs;
+
+        return transportService.callTool(toolName, transportArgs, {
+          truncateResponse: !disableResponseTruncation,
+        });
       },
       {
-        // OpenAI tool calling rejects dots in function names, while MCP tool names use them.
         name: generatedToolNameAliases.get(toolName) ?? toolName,
         description: buildToolDescription(toolName),
         schema: buildInputSchema(toolName),

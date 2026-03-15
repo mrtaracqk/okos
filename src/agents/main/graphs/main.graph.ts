@@ -1,9 +1,9 @@
 import { AIMessage, BaseMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { Annotation, BaseCheckpointSaver, END, START, StateGraph, getConfig } from '@langchain/langgraph';
-import { catalogAgentGraph, type WorkerRun } from '../../catalog/catalog.agent';
+import { catalogAgentGraph, type WorkerRun } from '../../catalog';
 import { graphCheckpointer } from '../../shared/checkpointing';
 import { extractMessageText, getLastAIMessage, getLastAIMessageText } from '../../shared/messageUtils';
-import { buildTraceAttributes, formatTraceText, runChainSpan } from '../../../observability/traceContext';
+import { addTraceEvent, buildTraceAttributes, formatTraceText, runChainSpan } from '../../../observability/traceContext';
 import { telegramMainGraphProgressReporter, type MainGraphProgressReporter } from '../progress';
 import { responseAgentNode } from '../nodes/responseAgent.node';
 import { delegateCatalogTool } from '../tools/delegateCatalog.tool';
@@ -14,7 +14,7 @@ type CatalogDelegationResult = {
   directResponse: string | null;
   failureWorker: string | null;
   rawText: string;
-  status: 'success' | 'partial' | 'failed';
+  status: 'success' | 'failed';
 };
 
 export const MainGraphStateAnnotation = Annotation.Root({
@@ -44,11 +44,6 @@ const getMainRoute = async (state: typeof MainGraphStateAnnotation.State, progre
 
   return 'end';
 };
-
-function getCatalogDeclaredStatus(text: string) {
-  const match = text.match(/^Status:\s*(ready|partial)\b/im);
-  return match?.[1]?.toLowerCase() ?? null;
-}
 
 function formatWorkerName(workerName: WorkerRun['agent']) {
   return workerName.replace(/^run_/, '').replace(/_/g, '-');
@@ -92,7 +87,7 @@ function buildCatalogDelegationResult(input: { rawText: string; workerRuns: Work
   }
 
   return {
-    status: getCatalogDeclaredStatus(input.rawText) === 'partial' ? 'partial' : 'success',
+    status: 'success',
     rawText: input.rawText,
     failureWorker: null,
     directResponse: null,
@@ -113,6 +108,12 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
 
         const statusText = extractMessageText(lastMessage.content).trim() || undefined;
         const userRequest = typeof toolCall.args?.userRequest === 'string' ? toolCall.args.userRequest.trim() : '';
+        addTraceEvent('agent.handoff', {
+          from_agent: 'main_graph.response_agent',
+          to_agent: 'catalog_agent',
+          'tool.name': delegateCatalogTool.name,
+          status: userRequest ? 'requested' : 'invalid',
+        });
 
         if (!userRequest) {
           const directResponse = 'Не удалось передать запрос в catalog-agent: отсутствует обязательный аргумент userRequest.';
@@ -122,14 +123,14 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
               new ToolMessage({
                 tool_call_id: toolCall.id ?? toolCall.name,
                 name: toolCall.name,
-                content: 'Catalog handoff failed: missing required "userRequest" argument.',
+                content: 'Не удалось передать задачу в catalog-agent: отсутствует обязательный аргумент "userRequest".',
               }),
               new AIMessage(directResponse),
             ],
             catalogDelegation: {
               directResponse,
               failureWorker: null,
-              rawText: 'Catalog handoff failed: missing required "userRequest" argument.',
+              rawText: 'Не удалось передать задачу в catalog-agent: отсутствует обязательный аргумент "userRequest".',
               status: 'failed',
             } satisfies CatalogDelegationResult,
           };
@@ -146,11 +147,19 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
           },
           getConfig()
         );
-        const rawText = getLastAIMessageText(result.messages) || 'Catalog agent completed without a text response.';
+        const rawText = getLastAIMessageText(result.messages) || 'Catalog-agent завершил работу без текстового ответа.';
         const workerRuns = Array.isArray(result.workerRuns) ? result.workerRuns : [];
         const delegationResult = buildCatalogDelegationResult({
           rawText,
           workerRuns,
+        });
+        addTraceEvent('agent.handoff', {
+          from_agent: 'main_graph.response_agent',
+          to_agent: 'catalog_agent',
+          'tool.name': delegateCatalogTool.name,
+          status: delegationResult.status,
+          'catalog.worker_runs': workerRuns.length,
+          'catalog.failure_worker': delegationResult.failureWorker,
         });
 
         const messages: BaseMessage[] = [
@@ -212,7 +221,7 @@ function getPostCatalogRoute(state: typeof MainGraphStateAnnotation.State) {
 
 export function createMainGraph({
   checkpointer = graphCheckpointer,
-  name = 'Main Telegram Bot Graph',
+  name = 'Основной граф Telegram-бота',
   progressReporter = telegramMainGraphProgressReporter,
 }: CreateMainGraphOptions = {}) {
   return new StateGraph(MainGraphStateAnnotation)
@@ -235,7 +244,7 @@ export function createMainGraph({
     .compile({
       checkpointer,
       name,
-      description: 'Main Telegram orchestration graph that delegates catalog work to the catalog-agent subgraph.',
+      description: 'Основной orchestration-граф Telegram-бота, который делегирует работу по каталогу в подграф catalog-agent.',
     });
 }
 

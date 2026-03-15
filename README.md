@@ -244,6 +244,7 @@ Okos includes a robust authentication system to control who can access and use t
    - Admin commands:
      - `/list_users` - View all authorized users
      - `/remove_user <username>` - Remove a user's access
+     - `/set_model <model>` - Override the runtime OpenAI chat model in memory until restart
 
 3. **Command Access**
    - Basic commands like `/clear_messages` and `/clear_all` are available to all users
@@ -260,6 +261,8 @@ Okos uses three different model configurations for specialized tasks:
 
    - **Must support native tool use** (e.g., GPT-4o, Gemini-1.5-flash)
    - Handles the main conversation flow and tool invocation
+   - For the OpenAI provider, the default value comes from `OPENAI_MODEL_NAME`; it can be overridden at runtime with `/set_model <model>`
+   - `/set_model` accepts both `gpt-5-mini` and `openai/gpt-5-mini`; the stored runtime value is normalized to the bare model name
 
 2. **Utility Model** - For internal utility tasks
 

@@ -1,12 +1,10 @@
 import TelegramBot from 'node-telegram-bot-api';
+import TelegramService from '../../services/telegram';
+import type { RuntimeTelegramMessageRef } from '../shared/runtime-plugin.types';
 import type { ApprovalChannelAdapter, ApprovalRequest } from './core';
-import type { TelegramRequestContext } from './requestContext';
-import TelegramService from '../services/telegram';
+import type { TelegramRequestContext } from './request-context';
 
-type TelegramApprovalMetadata = {
-  chatId: number;
-  messageId: number;
-};
+export type TelegramApprovalMetadata = RuntimeTelegramMessageRef;
 
 export type ParsedTelegramApprovalDecision = {
   approvalId: string;
@@ -22,7 +20,7 @@ function serializeArgs(args: Record<string, unknown>) {
 
     return `${serialized.slice(0, 1497)}...`;
   } catch {
-    return '[unserializable arguments]';
+    return '[не удалось сериализовать аргументы]';
   }
 }
 
@@ -38,7 +36,7 @@ function buildDecisionPayload(approvalId: string, decision: 'approved' | 'reject
 }
 
 function buildDecisionText(decision: 'approved' | 'rejected') {
-  return decision === 'approved' ? 'Approve' : 'Reject';
+  return decision === 'approved' ? 'Подтвердить' : 'Отклонить';
 }
 
 function buildRequesterLabel(context: TelegramRequestContext) {

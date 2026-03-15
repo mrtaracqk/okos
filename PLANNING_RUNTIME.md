@@ -295,7 +295,6 @@ action: 'create' | 'update' | 'complete' | 'fail'
 Ограничения:
 
 - хотя бы один шаг;
-- не более одного `in_progress` шага;
 - `owner` только из разрешенного enum.
 
 ### `update`
