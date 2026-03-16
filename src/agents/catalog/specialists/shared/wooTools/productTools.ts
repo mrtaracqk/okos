@@ -2,6 +2,35 @@ import { z } from 'zod';
 import { createWooTool } from '../../../../../services/woo/createWooTool';
 import { buildToolSuccess } from '../../../../../services/woo/wooToolResult';
 
+const truncateField = (value: unknown, maxLength: number) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
+};
+
+const toProductSummary = (product: any) => {
+  if (!product || typeof product !== 'object') {
+    return product;
+  }
+
+  return {
+    id: product.id,
+    type: product.type,
+    name: product.name,
+    status: product.status,
+    categories: product.categories,
+    date_created: product.date_created,
+    default_attributes: product.default_attributes,
+    description: truncateField(product.description, 300),
+    short_description: truncateField(product.short_description, 300),
+    permalink: product.permalink,
+    regular_price: product.regular_price,
+    sku: product.sku,
+    variations: product.variations,
+  };
+};
+
 const listProductsTool = createWooTool({
   name: 'wc.v3.products_list',
   description: 'Получить список товаров с опциональной фильтрацией по странице, поиску, статусу и др.',
@@ -22,7 +51,7 @@ const listProductsTool = createWooTool({
       },
     });
     const list = Array.isArray(response) ? response : [];
-    return buildToolSuccess(list);
+    return buildToolSuccess(list.map((item) => toProductSummary(item)));
   },
 });
 
@@ -35,7 +64,7 @@ const getProductTool = createWooTool({
   }),
   run: async (input, { client }) => {
     const product = await client.products.getProduct({ path: { id: input.id } });
-    return buildToolSuccess(product);
+    return buildToolSuccess(toProductSummary(product));
   },
 });
 
@@ -79,7 +108,7 @@ const createProductTool = createWooTool({
         attributes: input.attributes,
       },
     });
-    return buildToolSuccess(product);
+    return buildToolSuccess(toProductSummary(product));
   },
 });
 
@@ -102,7 +131,7 @@ const updateProductTool = createWooTool({
       path: { id },
       body: body as Parameters<typeof client.products.updateProduct>[0]['body'],
     });
-    return buildToolSuccess(product);
+    return buildToolSuccess(toProductSummary(product));
   },
 });
 
@@ -117,7 +146,7 @@ const duplicateProductTool = createWooTool({
     const product = await client.products.createProductDuplicate({
       path: { id: input.id },
     });
-    return buildToolSuccess(product);
+    return buildToolSuccess(toProductSummary(product));
   },
 });
 
