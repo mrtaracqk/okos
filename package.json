@@ -13,7 +13,6 @@
     "studio": "langgraphjs dev",
     "start": "bun dist/app.js",
     "test": "bun test",
-    "generate:woocommerce-tools": "node ./tools/woocommerce/export-mcporter-tools.mjs ./tools/woocommerce/woocommerce-tools.snapshot.json ./tools/woocommerce/woocommerce-worker-toolsets.json ./src/generated/woocommerceTools.generated.ts",
     "typecheck": "tsc --noEmit",
     "up:dev": "docker compose -f ./docker-compose.dev.yml up -d",
     "down:dev": "docker compose -f ./docker-compose.dev.yml down",

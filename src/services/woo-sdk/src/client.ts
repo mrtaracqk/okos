@@ -3,7 +3,7 @@
  * generator-version: 1
  * wordpress-version: unknown
  * woocommerce-version: 9.9.7
- * woocommerce-version-source: unknown
+ * woocommerce-version-source: cli
  */
 
 import { createWooRequestExecutor } from "./core/http";

@@ -40,18 +40,11 @@ describe('createToolLoopGraph', () => {
           name: 'fetch_product',
           invoke: async () => ({
             ok: true,
-            tool: 'fetch_product',
-            text: duplicatedText,
             structured: {
+              text: duplicatedText,
               id: 123,
               name: 'Sample',
             },
-            content: [
-              {
-                type: 'text',
-                text: duplicatedText,
-              },
-            ],
           }),
         },
       ],
@@ -67,13 +60,16 @@ describe('createToolLoopGraph', () => {
     expect(toolMessage?.content).toBe(
       JSON.stringify({
         ok: true,
-        tool: 'fetch_product',
-        text: duplicatedText,
+        structured: {
+          text: duplicatedText,
+          id: 123,
+          name: 'Sample',
+        },
       })
     );
   });
 
-  test('truncates long nested strings in serialized tool payloads by default', async () => {
+  test('serializes tool payload without truncating content', async () => {
     let invocationCount = 0;
     const longString = 'x'.repeat(350);
     const nestedLongString = 'y'.repeat(340);
@@ -111,26 +107,13 @@ describe('createToolLoopGraph', () => {
           name: 'fetch_product',
           invoke: async () => ({
             ok: true,
-            tool: 'fetch_product',
-            text: 'summary',
             structured: {
+              text: 'summary',
               description: longString,
               nested: {
                 notes: nestedLongString,
               },
             },
-            content: [
-              {
-                type: 'resource',
-                resource: {
-                  description: contentLongString,
-                },
-              },
-              {
-                type: 'text',
-                text: contentLongString,
-              },
-            ],
           }),
         },
       ],
@@ -144,10 +127,10 @@ describe('createToolLoopGraph', () => {
     const toolMessage = result.messages.find((message) => message instanceof ToolMessage);
     const payload = JSON.parse(String(toolMessage?.content)) as Record<string, any>;
 
-    expect(payload.structured.description).toHaveLength(300);
-    expect(payload.structured.nested.notes).toHaveLength(300);
-    expect(payload.content[0].resource.description).toHaveLength(300);
-    expect(payload.content[1].text).toHaveLength(300);
+    expect(payload.structured.description).toHaveLength(350);
+    expect(payload.structured.nested.notes).toHaveLength(340);
+    expect(payload.content[0].resource.description).toHaveLength(360);
+    expect(payload.content[1].text).toHaveLength(360);
   });
 
   test('uses structured.result as compact ToolMessage content for successful Woo envelopes', async () => {
@@ -191,35 +174,9 @@ describe('createToolLoopGraph', () => {
           name: 'fetch_product',
           invoke: async () => ({
             ok: true,
-            tool: 'fetch_product',
-            text: JSON.stringify({
-              ok: true,
-              toolName: 'wc.v3.products_read',
-              operationKey: 'PRODUCTS_READ',
-              result: resultPayload,
-              request: {
-                path: {
-                  id: 4335,
-                },
-              },
-            }),
             structured: {
-              ok: true,
-              toolName: 'wc.v3.products_read',
-              operationKey: 'PRODUCTS_READ',
               result: resultPayload,
-              request: {
-                path: {
-                  id: 4335,
-                },
-              },
             },
-            content: [
-              {
-                type: 'text',
-                text: 'full envelope text that should not be passed to the model',
-              },
-            ],
           }),
         },
       ],
@@ -265,8 +222,6 @@ describe('createToolLoopGraph', () => {
         tool(
           async () => ({
             ok: true,
-            tool: 'report_worker_result',
-            text: 'reported',
             structured: {
               status: 'completed',
             },

@@ -33,7 +33,6 @@ export function buildNoToolCallFailure(workerName: CatalogWorkerToolName, task: 
       mode,
     },
     status: 'failed',
-    text: 'Воркер завершился без вызова какого-либо инструмента WooCommerce.',
     structured: null,
     error: {
       source: 'catalog-worker',
@@ -73,7 +72,7 @@ export function formatWorkerFailure(toolRun: ToolRun | undefined) {
   const lines = [
     `Инструмент сбоя: ${toolRun.toolName}`,
     `Источник сбоя: ${toolRun.error?.source ?? 'unknown'}`,
-    `Сообщение о сбое: ${toolRun.error?.message ?? toolRun.text}`,
+    `Сообщение о сбое: ${toolRun.error?.message ?? ''}`,
   ];
 
   if (toolRun.error?.type) {

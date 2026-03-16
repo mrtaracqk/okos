@@ -2,11 +2,11 @@ import { chatModel } from '../../../config';
 import { PROMPTS } from '../../../prompts';
 import { WORKER_RESULT_TOOL_NAME, createWorkerResultTool } from '../contracts/workerResult';
 import { createToolLoopGraph } from '../../shared/toolLoopGraph';
-import { createGeneratedTransportTools } from './shared/generatedTransportTools';
+import { categoryWorkerWooTools } from './shared/wooTools/categoryTools';
 import { createCatalogWorkerHandoffTool } from './shared/handoffTool';
 import { type CatalogWorkerDefinition } from './shared/workerDefinition';
 
-const categoryWorkerTools = [...createGeneratedTransportTools('category-worker'), createWorkerResultTool()];
+const categoryWorkerTools = [...categoryWorkerWooTools, createWorkerResultTool()];
 
 function buildCategoryWorkerGraph() {
   return createToolLoopGraph({

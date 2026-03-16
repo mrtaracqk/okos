@@ -10,13 +10,10 @@ import {
   runLlmSpan,
   runToolSpan,
 } from '../../observability/traceContext';
-import { DISABLE_RESPONSE_TRUNCATION_METADATA_KEY } from './toolResponsePostprocess';
-
 export type ToolRun = {
   toolName: string;
   args: Record<string, unknown>;
   status: 'completed' | 'failed';
-  text: string;
   structured: Record<string, unknown> | null;
   error?: {
     source?: string;
@@ -104,61 +101,12 @@ function normalizeToolContentValue(value: unknown): string | null {
   return safeSerialize(value);
 }
 
-function dedupeToolPayload(value: Record<string, unknown>): Record<string, unknown> {
-  const payload = { ...value };
-  const text = typeof payload.text === 'string' ? payload.text.trim() : '';
-  const structuredValue =
-    payload.structured !== undefined ? safeSerialize(payload.structured) : null;
-  const contentValue = normalizeToolContentValue(payload.content);
-
-  if (text.length > 0 && structuredValue === text) {
-    delete payload.structured;
-  }
-
-  if (
-    (text.length > 0 && contentValue === text) ||
-    ((text.length === 0 || !('text' in payload)) &&
-      structuredValue !== null &&
-      contentValue === structuredValue)
-  ) {
-    delete payload.content;
-  }
-
-  return payload;
-}
-
-function truncateString(value: string, limit: number) {
-  return value.length > limit ? value.slice(0, limit) : value;
-}
-
-function truncateStringsDeep(value: unknown, limit: number): unknown {
-  if (typeof value === 'string') {
-    return truncateString(value, limit);
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((item) => truncateStringsDeep(item, limit));
-  }
-
-  if (!isRecord(value)) {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).map(([key, nestedValue]) => [key, truncateStringsDeep(nestedValue, limit)])
-  );
-}
-
 function serializeToolPayload(value: unknown): string {
   if (typeof value === 'string') {
     return value;
   }
 
-  const shouldTruncateResponse =
-    !isRecord(value) || value[DISABLE_RESPONSE_TRUNCATION_METADATA_KEY] !== true;
-  const dedupedValue = isRecord(value) ? dedupeToolPayload(value) : value;
-  const serializableValue = shouldTruncateResponse ? truncateStringsDeep(dedupedValue, 300) : dedupedValue;
-  return safeSerialize(serializableValue) ?? String(serializableValue);
+  return safeSerialize(value) ?? String(value);
 }
 
 function extractCompactToolMessagePayload(value: unknown): unknown {
@@ -184,12 +132,10 @@ function normalizeToolRun(toolName: string, args: Record<string, unknown>, paylo
       toolName,
       args,
       status: 'completed',
-      text: serializeToolPayload(payload),
       structured: null,
     };
   }
 
-  const text = typeof payload.text === 'string' && payload.text.trim().length > 0 ? payload.text : serializeToolPayload(payload);
   const structured = isRecord(payload.structured) ? payload.structured : null;
   const error = isRecord(payload.error) ? payload.error : null;
 
@@ -198,11 +144,10 @@ function normalizeToolRun(toolName: string, args: Record<string, unknown>, paylo
       toolName,
       args,
       status: 'failed',
-      text,
       structured,
       error: {
         source: typeof error?.source === 'string' ? error.source : undefined,
-        message: typeof error?.message === 'string' ? error.message : text,
+        message: typeof error?.message === 'string' ? error.message : 'tool execution failed',
         code: typeof error?.code === 'string' ? error.code : undefined,
         type: typeof error?.type === 'string' ? error.type : undefined,
         retryable: typeof error?.retryable === 'boolean' ? error.retryable : undefined,
@@ -214,7 +159,6 @@ function normalizeToolRun(toolName: string, args: Record<string, unknown>, paylo
     toolName,
     args,
     status: 'completed',
-    text,
     structured,
   };
 }
@@ -222,8 +166,6 @@ function normalizeToolRun(toolName: string, args: Record<string, unknown>, paylo
 function buildFailedToolPayload(toolName: string, message: string, source: string, type: string) {
   return {
     ok: false,
-    tool: toolName,
-    text: message,
     structured: null,
     error: {
       source,
@@ -348,12 +290,12 @@ export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames
                   'error.code': normalizedRun.error?.code,
                   'error.retryable': normalizedRun.error?.retryable,
                 }),
-                ...buildTraceOutputAttributes(normalizedRun.text, 1200),
+                ...buildTraceOutputAttributes(normalizedRun.structured, 1200),
               };
             },
             statusMessage: (result) => {
               const normalizedRun = normalizeToolRun(toolName, args, result);
-              return normalizedRun.status === 'failed' ? normalizedRun.error?.message ?? normalizedRun.text : undefined;
+              return normalizedRun.status === 'failed' ? normalizedRun.error?.message : undefined;
             },
           }
         );

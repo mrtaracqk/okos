@@ -43,14 +43,12 @@ describe('workerResult', () => {
           toolName: 'wc_v3_products_list',
           args: {},
           status: 'completed',
-          text: '[]',
           structured: null,
         },
         {
           toolName: WORKER_RESULT_TOOL_NAME,
           args: {},
           status: 'completed',
-          text: 'ignored',
           structured: {
             status: 'completed',
             data: ['product_id: 4335'],

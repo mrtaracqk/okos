@@ -8,7 +8,6 @@ import MessageQueueService, { MessagePayload } from './services/messageQueue';
 import { RedisService } from './services/redis';
 import TelegramService from './services/telegram';
 import { handleTelegramApprovalCallback } from './services/toolApproval';
-import { validateWooCommerceTransportOnStartup } from './services/woocommerceTransport';
 
 const port = process.env.PORT || 11435;
 const OKOS_TOKEN = process.env.OKOS_TOKEN || 'default_token';
@@ -17,19 +16,7 @@ const OKOS_ADMIN_USERNAME = process.env.OKOS_ADMIN_USERNAME || '';
 // Initialize bot using singleton
 const bot = TelegramService.getInstance();
 
-// Start the bot (this will initialize polling or webhook only once)
-async function bootstrapCatalogTransport() {
-  await validateWooCommerceTransportOnStartup();
-}
-
-void bootstrapCatalogTransport()
-  .then(() => {
-    TelegramService.startBot();
-  })
-  .catch((error) => {
-    console.error('Failed to initialize WooCommerce transport:', error);
-    process.exit(1);
-  });
+TelegramService.startBot();
 
 // Initialize services
 const queueService = MessageQueueService.getInstance();

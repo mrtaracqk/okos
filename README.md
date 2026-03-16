@@ -9,8 +9,7 @@ Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and cloud AI m
 - Multiple AI model support (OpenAI, Google Gemini, Groq)
 - Native tool use for enhanced performance and reliability
 - Catalog orchestration with `main -> catalog-agent -> worker-agents`
-- WooCommerce catalog workers backed by an MCP server over HTTP
-- Build-time generated WooCommerce tool registry with worker-specific allowlists
+- WooCommerce catalog workers backed by in-app Woo REST SDK; tools defined in code with per-tool approval for mutating actions
 - Phoenix tracing for runtime inspection of assistant turns and agent orchestration
 - Conversation context management
 - Multiple Images input support
@@ -64,7 +63,7 @@ cp .env.docker.example .env.docker
 - Provider-specific API keys and model names
 - `OPENAI_BASE_URL` for OpenAI-compatible endpoints (optional)
 - Redis URL
-- WooCommerce MCP endpoint and token
+- WooCommerce REST API URL and optional consumer key/secret for catalog tools
 - Phoenix tracing endpoint
 - (Optional) LangSmith credentials for monitoring
 
@@ -82,15 +81,16 @@ bun dev
 
 For local development, `docker-compose.dev.yml` starts only Redis. The bot runs on your host via `bun dev`, so you keep hot reload and use cloud providers directly.
 
-If you use the WooCommerce catalog flow, make sure the WooCommerce MCP server is reachable from the app and that `.env` includes:
+If you use the WooCommerce catalog flow, set the WooCommerce REST API in `.env`:
 
 ```bash
-WOOCOMMERCE_MCP_BASE_URL=http://woo-mcp:3000/mcp
-# optional when the MCP endpoint is protected
-WOOCOMMERCE_MCP_TOKEN=your_token
+WOOCOMMERCE_REST_BASE_URL=https://your-store.com/wp-json/wc/v3
+# optional for authenticated requests
+WOOCOMMERCE_CONSUMER_KEY=ck_...
+WOOCOMMERCE_CONSUMER_SECRET=cs_...
 ```
 
-Mutating WooCommerce actions are guarded by a runtime Telegram approval step. By default the assistant waits up to 5 minutes for approval before failing the action. Override this with `WOOCOMMERCE_APPROVAL_TIMEOUT_MS` if needed.
+Mutating WooCommerce actions (create/update) are guarded by a runtime Telegram approval step; only tools that declare `requiresApproval: true` go through the gate. By default the assistant waits up to 5 minutes for approval before failing the action. Override this with `WOOCOMMERCE_APPROVAL_TIMEOUT_MS` if needed.
 
 If you want runtime traces in Phoenix, also set:
 
@@ -102,7 +102,7 @@ PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006
 
 In the local Docker stack the collector is available as `http://phoenix:6006` from inside the `op-assistant` container, and the Phoenix UI is exposed on `http://127.0.0.1:6006`.
 
-Because `op-assistant` runs on Bun, LangChain auto-instrumentation is currently skipped there. Phoenix still receives the manual runtime spans emitted by the app (`assistant.turn`, catalog/worker spans, WooCommerce transport spans).
+Because `op-assistant` runs on Bun, LangChain auto-instrumentation is currently skipped there. Phoenix still receives the manual runtime spans emitted by the app (`assistant.turn`, catalog/worker spans, Woo tool execution spans).
 
 Production mode:
 
@@ -138,8 +138,9 @@ Cloud deployment:
 - `OKOS_ADMIN_USERNAME`: Telegram username of the admin user
 - `MODEL_PROVIDER`: AI model provider ('openai', 'google', or 'groq')
 - `REDIS_URL`: Redis connection URL
-- `WOOCOMMERCE_MCP_BASE_URL`: Full URL of the WooCommerce MCP endpoint
-- `WOOCOMMERCE_MCP_TOKEN`: Optional bearer token for the WooCommerce MCP endpoint
+- `WOOCOMMERCE_REST_BASE_URL`: WooCommerce REST API base URL (e.g. `https://your-store.com/wp-json/wc/v3`)
+- `WOOCOMMERCE_CONSUMER_KEY`: Optional consumer key for authenticated Woo REST requests
+- `WOOCOMMERCE_CONSUMER_SECRET`: Optional consumer secret for authenticated Woo REST requests
 
 ### Provider-Specific
 
@@ -177,7 +178,7 @@ Catalog work is handled by a dedicated orchestration layer:
 - `main` delegates catalog-domain requests to `catalog-agent`
 - `catalog-agent` selects a playbook, optionally inspects full playbook instructions, and delegates to workers
 - workers are narrow specialists for categories, attributes, products, and variations
-- workers only see their own assigned tools and do not know about the MCP transport layer
+- workers only see their own assigned tools (from `wooTools`); execution is via in-app Woo REST SDK
 
 Canonical playbooks live in code in `src/agents/catalog/playbooks.ts`.
 
@@ -188,25 +189,14 @@ Phoenix is the primary runtime tracing backend for `op-assistant`.
 - One Telegram user turn maps to root span `assistant.turn`
 - Main orchestration is traced through spans like `main_graph.invoke`, `main_graph.response_agent`, and `main_graph.catalog_agent_handoff`
 - Catalog planning and worker execution are traced through `catalog_agent.invoke`, `catalog_agent.planner_iteration`, `catalog_agent.worker_handoff`, `worker.tool_loop.agent`, and `worker.tool_call`
-- WooCommerce transport calls are traced via `woocommerce_transport.call_tool`
+- Woo tool execution is traced via `woocommerce_transport.call_tool` (span name kept for compatibility)
 
 Technical execution logs are no longer sent back to Telegram as `SYSTEM LOG`. For debugging orchestration, inspect Phoenix first.
 On Bun, these traces currently come from the app's manual spans; LangChain auto-instrumentation is not enabled there.
 
-## WooCommerce Tool Generation
+## WooCommerce catalog tools
 
-WooCommerce worker tools are generated from a committed `tools/list` snapshot:
-
-- snapshot source: `tools/woocommerce/woocommerce-tools.snapshot.json`
-- worker allowlists: `tools/woocommerce/woocommerce-worker-toolsets.json`
-- generated output: `src/generated/woocommerceTools.generated.ts`
-
-Regenerate after snapshot changes:
-
-```bash
-bun run generate:woocommerce-tools
-bun run typecheck
-```
+Catalog workers use Woo tools defined in code under `src/agents/catalog/specialists/shared/wooTools/` (product, category, attribute, variation). Each tool is created via `createWooTool(spec)`; execution goes through `wooToolExecutor` and the Woo REST client (`wooClient`). Set `WOOCOMMERCE_REST_BASE_URL` (and optionally consumer key/secret) for live API access. Tools that mutate data can set `requiresApproval: true` so the runtime asks for Telegram approval before running.
 
 ## Message Queue System
 
@@ -227,8 +217,8 @@ Detailed documentation about the queue system is available in the [Queue System 
 
 Okos provides WooCommerce catalog tools for catalog operations:
    - Categories, attributes, products, and variations are handled by separate worker agents
-   - Tool schemas come from the generated WooCommerce registry
-   - Runtime execution goes through the configured WooCommerce MCP endpoint
+   - Tool definitions live in `src/agents/catalog/specialists/shared/wooTools/`
+   - Runtime execution uses the in-app Woo REST SDK (`WOOCOMMERCE_REST_BASE_URL` and optional credentials)
 
 ## Authentication System
 

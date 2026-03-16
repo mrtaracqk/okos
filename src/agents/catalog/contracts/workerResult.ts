@@ -78,8 +78,6 @@ export function createWorkerResultTool() {
 
       return {
         ok: true,
-        tool: WORKER_RESULT_TOOL_NAME,
-        text: renderWorkerResult(result),
         structured: result,
       };
     },
