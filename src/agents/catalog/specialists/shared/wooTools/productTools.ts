@@ -36,8 +36,8 @@ const listProductsTool = createWooTool({
   description: 'Получить список товаров с опциональной фильтрацией по странице, поиску, статусу и др.',
   requiresApproval: false,
   schema: z.object({
-    page: z.number().int().min(1).optional(),
-    per_page: z.number().int().min(1).max(100).optional(),
+    page: z.coerce.number().int().min(1).optional(),
+    per_page: z.coerce.number().int().min(1).max(100).optional(),
     search: z.string().optional(),
     status: z.enum(['draft', 'pending', 'private', 'publish']).optional(),
   }),

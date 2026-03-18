@@ -1,21 +1,15 @@
 import { AIMessage, BaseMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { Annotation, BaseCheckpointSaver, END, START, StateGraph, getConfig } from '@langchain/langgraph';
-import { catalogAgentGraph, type WorkerRun } from '../../catalog';
+import { buildCatalogDelegationResultFromCatalogState, catalogAgentGraph, type CatalogDelegationResult } from '../../catalog';
 import { graphCheckpointer } from '../../shared/checkpointing';
 import { extractMessageText, getLastAIMessage, getLastAIMessageText } from '../../shared/messageUtils';
 import { addTraceEvent, buildTraceAttributes, formatTraceText, runChainSpan } from '../../../observability/traceContext';
 import { telegramMainGraphProgressReporter, type MainGraphProgressReporter } from '../progress';
+import { parseCatalogDelegationRequest, renderCatalogDelegationRequestToPrompt } from '../catalogDelegation';
 import { responseAgentNode } from '../nodes/responseAgent.node';
 import { delegateCatalogTool } from '../tools/delegateCatalog.tool';
 
 export const mainTools = [delegateCatalogTool];
-
-type CatalogDelegationResult = {
-  directResponse: string | null;
-  failureWorker: string | null;
-  rawText: string;
-  status: 'success' | 'failed';
-};
 
 export const MainGraphStateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
@@ -45,55 +39,6 @@ const getMainRoute = async (state: typeof MainGraphStateAnnotation.State, progre
   return 'end';
 };
 
-function formatWorkerName(workerName: WorkerRun['agent']) {
-  return workerName.replace(/^run_/, '').replace(/_/g, '-');
-}
-
-function getLastFailedWorker(workerRuns: WorkerRun[]) {
-  for (let index = workerRuns.length - 1; index >= 0; index -= 1) {
-    const workerRun = workerRuns[index];
-    if (workerRun?.status === 'failed' || workerRun?.status === 'invalid') {
-      return workerRun;
-    }
-  }
-
-  return undefined;
-}
-
-function buildCatalogFailureMessage(rawText: string, failedWorker: WorkerRun) {
-  const sections = [
-    'Не удалось выполнить запрос к каталогу.',
-    `Сбой на шаге ${formatWorkerName(failedWorker.agent)}.`,
-  ];
-
-  if (failedWorker.details?.trim()) {
-    sections.push(failedWorker.details.trim());
-  } else if (rawText.trim()) {
-    sections.push(rawText.trim());
-  }
-
-  return sections.join('\n\n');
-}
-
-function buildCatalogDelegationResult(input: { rawText: string; workerRuns: WorkerRun[] }): CatalogDelegationResult {
-  const failedWorker = getLastFailedWorker(input.workerRuns);
-  if (failedWorker) {
-    return {
-      status: 'failed',
-      rawText: input.rawText,
-      failureWorker: formatWorkerName(failedWorker.agent),
-      directResponse: buildCatalogFailureMessage(input.rawText, failedWorker),
-    };
-  }
-
-  return {
-    status: 'success',
-    rawText: input.rawText,
-    failureWorker: null,
-    directResponse: null,
-  };
-}
-
 function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
   return async (state: typeof MainGraphStateAnnotation.State): Promise<Partial<typeof MainGraphStateAnnotation.State>> => {
     return runChainSpan(
@@ -107,32 +52,31 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
         }
 
         const statusText = extractMessageText(lastMessage.content).trim() || undefined;
-        const userRequest = typeof toolCall.args?.userRequest === 'string' ? toolCall.args.userRequest.trim() : '';
+        const request = parseCatalogDelegationRequest(toolCall.args);
         addTraceEvent('agent.handoff', {
           from_agent: 'main_graph.response_agent',
           to_agent: 'catalog_agent',
           'tool.name': delegateCatalogTool.name,
-          status: userRequest ? 'requested' : 'invalid',
+          status: request ? 'requested' : 'invalid',
         });
 
-        if (!userRequest) {
-          const directResponse = 'Не удалось передать запрос в catalog-agent: отсутствует обязательный аргумент userRequest.';
+        if (!request) {
+          const summary =
+            'Не удалось передать запрос в catalog-agent: укажи цель (goal) и желаемый результат (desiredOutcome).';
 
           return {
             messages: [
               new ToolMessage({
                 tool_call_id: toolCall.id ?? toolCall.name,
                 name: toolCall.name,
-                content: 'Не удалось передать задачу в catalog-agent: отсутствует обязательный аргумент "userRequest".',
+                content: summary,
               }),
-              new AIMessage(directResponse),
+              new AIMessage(summary),
             ],
             catalogDelegation: {
-              directResponse,
-              failureWorker: null,
-              rawText: 'Не удалось передать задачу в catalog-agent: отсутствует обязательный аргумент "userRequest".',
               status: 'failed',
-            } satisfies CatalogDelegationResult,
+              summary,
+            },
           };
         }
 
@@ -141,38 +85,34 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
           statusText,
         });
 
+        const prompt = renderCatalogDelegationRequestToPrompt(request);
         const result = await catalogAgentGraph.invoke(
           {
-            messages: [new HumanMessage(userRequest)],
+            messages: [new HumanMessage(prompt)],
           },
           getConfig()
         );
-        const rawText = getLastAIMessageText(result.messages) || 'Catalog-agent завершил работу без текстового ответа.';
-        const workerRuns = Array.isArray(result.workerRuns) ? result.workerRuns : [];
-        const delegationResult = buildCatalogDelegationResult({
-          rawText,
-          workerRuns,
+        const summary = getLastAIMessageText(result.messages) || 'Catalog-agent завершил работу без текстового ответа.';
+        const delegationResult = buildCatalogDelegationResultFromCatalogState({
+          summary,
+          workerRuns: Array.isArray(result.workerRuns) ? result.workerRuns : [],
         });
         addTraceEvent('agent.handoff', {
           from_agent: 'main_graph.response_agent',
           to_agent: 'catalog_agent',
           'tool.name': delegateCatalogTool.name,
           status: delegationResult.status,
-          'catalog.worker_runs': workerRuns.length,
-          'catalog.failure_worker': delegationResult.failureWorker,
+          'catalog.worker_runs': Array.isArray(result.workerRuns) ? result.workerRuns.length : 0,
         });
 
         const messages: BaseMessage[] = [
           new ToolMessage({
             tool_call_id: toolCall.id ?? toolCall.name,
-            name: delegateCatalogTool.name,
-            content: rawText,
+            name: toolCall.name,
+            content: delegationResult.summary,
           }),
+          new AIMessage(delegationResult.summary),
         ];
-
-        if (delegationResult.directResponse) {
-          messages.push(new AIMessage(delegationResult.directResponse));
-        }
 
         return {
           messages,
@@ -185,38 +125,31 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
           'tool.name': delegateCatalogTool.name,
           'catalog.status_text': formatTraceText(extractMessageText(getLastAIMessage(state.messages)?.content).trim() || '', 500),
           'catalog.user_request': formatTraceText(
-            typeof getLastAIMessage(state.messages)?.tool_calls?.find((candidate) => candidate.name === delegateCatalogTool.name)?.args
-              ?.userRequest === 'string'
-              ? getLastAIMessage(state.messages)?.tool_calls?.find((candidate) => candidate.name === delegateCatalogTool.name)?.args
-                  ?.userRequest
-              : '',
+            (() => {
+              const req = parseCatalogDelegationRequest(
+                getLastAIMessage(state.messages)?.tool_calls?.find((c) => c.name === delegateCatalogTool.name)?.args
+              );
+              return req ? req.goal : '';
+            })(),
             1500
           ),
         }),
         mapResultAttributes: (result) =>
           buildTraceAttributes({
             'catalog.status': result.catalogDelegation?.status,
-            'catalog.failure_worker': result.catalogDelegation?.failureWorker,
-            'catalog.direct_response': result.catalogDelegation?.directResponse
-              ? formatTraceText(result.catalogDelegation.directResponse, 1000)
-              : undefined,
-            'output.value': result.catalogDelegation?.rawText
-              ? formatTraceText(result.catalogDelegation.rawText, 1500)
+            'output.value': result.catalogDelegation?.summary
+              ? formatTraceText(result.catalogDelegation.summary, 1500)
               : undefined,
           }),
         statusMessage: (result) =>
-          result.catalogDelegation?.status === 'failed'
-            ? result.catalogDelegation.failureWorker
-              ? `catalog worker failed: ${result.catalogDelegation.failureWorker}`
-              : 'catalog handoff failed'
-            : undefined,
+          result.catalogDelegation?.status === 'failed' ? 'catalog handoff failed' : undefined,
       }
     );
   };
 }
 
 function getPostCatalogRoute(state: typeof MainGraphStateAnnotation.State) {
-  return state.catalogDelegation?.directResponse ? 'end' : 'responseAgent';
+  return 'end';
 }
 
 export function createMainGraph({

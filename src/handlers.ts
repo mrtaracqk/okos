@@ -82,6 +82,18 @@ export async function handleMessage(chatId: number, text: string) {
             const finalResponse = await runChainSpan(
               'main_graph.final_response',
               async () => {
+                if (result.catalogDelegation?.summary?.trim()) {
+                  const responseText = result.catalogDelegation.summary.trim();
+                  await redisService.saveAIMessage(chatId, responseText);
+                  await TelegramService.sendMessage(chatId, responseText);
+
+                  return {
+                    delivered: true,
+                    responseText,
+                    responsePreview: formatTraceValue(responseText, 600),
+                  };
+                }
+
                 const lastMessage = result.messages.slice(-1)[0];
                 let aiResponse: string | undefined;
 
@@ -92,11 +104,6 @@ export async function handleMessage(chatId: number, text: string) {
                   } else if (Array.isArray(aiMessage)) {
                     aiResponse = (aiMessage as any[]).filter((content) => content.type === 'text')[0]?.text ?? undefined;
                   }
-                }
-
-                if (!aiResponse) {
-                  aiResponse =
-                    result.catalogDelegation?.directResponse?.trim() || result.catalogDelegation?.rawText?.trim() || undefined;
                 }
 
                 if (!aiResponse) {

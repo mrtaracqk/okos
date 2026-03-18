@@ -1,5 +1,12 @@
 import { BaseMessage, SystemMessage, ToolMessage, isAIMessage } from '@langchain/core/messages';
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
+import type { WorkerResultEnvelope } from '../catalog/contracts/workerResult';
+import {
+  normalizeWorkerResult,
+  workerResultToEnvelope,
+  WORKER_RESULT_TOOL_NAME,
+} from '../catalog/contracts/workerResult';
+import type { WorkerTaskEnvelope } from '../catalog/contracts/workerRequest';
 import {
   addTraceEvent,
   buildTraceAttributes,
@@ -36,6 +43,16 @@ export const ToolLoopStateAnnotation = Annotation.Root({
     reducer: (_, newValue) => newValue,
     default: () => false,
   }),
+  /** Structured handoff from planner; passed through, not consumed by the loop. */
+  handoff: Annotation<WorkerTaskEnvelope | null>({
+    reducer: (_, newValue) => newValue,
+    default: () => null,
+  }),
+  /** Set by the tools node when report_worker_result completes successfully. */
+  finalResult: Annotation<WorkerResultEnvelope | null>({
+    reducer: (_, newValue) => newValue,
+    default: () => null,
+  }),
 });
 
 type CreateToolLoopGraphOptions = {
@@ -53,6 +70,19 @@ type WorkerTool = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseToolCallArgs(value: unknown): Record<string, unknown> {
+  if (isRecord(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return isRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
 
 function normalizeArgs(value: unknown): Record<string, unknown> {
@@ -225,11 +255,12 @@ export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames
     const messages: ToolMessage[] = [];
     const toolRuns: ToolRun[] = [];
     const shouldExitAfterTools = lastMessage.tool_calls.some((toolCall) => finalToolNameSet.has(toolCall.name));
+    let finalResultUpdate: WorkerResultEnvelope | null = null;
 
     for (const toolCall of lastMessage.tool_calls) {
       const tool = toolsByName.get(toolCall.name);
       const toolCallId = toolCall.id ?? toolCall.name;
-      const args = normalizeArgs(toolCall.args);
+      const args = parseToolCallArgs(toolCall.args);
 
       if (!tool) {
         const payload = await runToolSpan(
@@ -301,6 +332,14 @@ export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames
         );
         const normalizedRun = normalizeToolRun(toolName, args, payload);
         toolRuns.push(normalizedRun);
+        if (
+          normalizedRun.toolName === WORKER_RESULT_TOOL_NAME &&
+          normalizedRun.status === 'completed' &&
+          normalizedRun.structured
+        ) {
+          const result = normalizeWorkerResult(normalizedRun.structured);
+          if (result) finalResultUpdate = workerResultToEnvelope(result);
+        }
         messages.push(
           new ToolMessage({
             tool_call_id: toolCallId,
@@ -327,6 +366,7 @@ export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames
       messages,
       toolRuns,
       shouldExitAfterTools,
+      ...(finalResultUpdate != null ? { finalResult: finalResultUpdate } : {}),
     };
   };
 

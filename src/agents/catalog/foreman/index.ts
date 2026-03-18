@@ -14,8 +14,10 @@ import { PROMPTS } from '../../../prompts';
 import { getPlanningRuntime } from '../../../runtime-plugins/planning';
 import { getLastAIMessageText } from '../../shared/messageUtils';
 import { renderPlaybookIndexForPrompt } from '../playbooks';
+import { type WorkerRun } from '../contracts/workerRun';
+import { type WorkerResultEnvelope } from '../contracts/workerResult';
 import { finalizeCatalogExecutionPlan, getCatalogAgentRuntimeRunId } from './planning';
-import { type CatalogForemanRoute, CatalogGraphStateAnnotation } from './state';
+import { type CatalogForemanRoute, type CatalogRequestContext, CatalogGraphStateAnnotation } from './state';
 import { executeCatalogToolCall } from './toolDispatcher';
 import { getLastFailedWorker } from './workerRunState';
 import { catalogForemanRegistry } from './workerRegistry';
@@ -61,6 +63,57 @@ function formatActivePlanTasks(runId: string) {
   };
 }
 
+type PlannerState = typeof CatalogGraphStateAnnotation.State;
+
+/**
+ * Builds the canonical structured-context message for the planner.
+ * Planner decisions should be based on this, not on ToolMessage.content (which remains auxiliary).
+ */
+function buildStructuredContextMessage(state: PlannerState): HumanMessage {
+  const lines: string[] = ['--- Контекст (structured state) ---'];
+
+  if (state.requestContext?.initialPrompt) {
+    lines.push(`Исходный запрос: ${state.requestContext.initialPrompt.slice(0, 800)}`);
+  }
+
+  if (state.workerRuns.length > 0) {
+    lines.push(
+      '',
+      'Выполненные шаги воркеров:',
+      ...state.workerRuns.map((r) => `- ${r.agent}: ${r.status}${r.task ? ` — ${r.task.slice(0, 120)}` : ''}`)
+    );
+  }
+
+  const last = state.latestWorkerResult;
+  if (last) {
+    lines.push(
+      '',
+      'Последний результат воркера (source of truth):',
+      `- status: ${last.status}`,
+      `- facts: ${last.facts.length} (${last.facts.slice(0, 3).join('; ')}${last.facts.length > 3 ? '…' : ''})`,
+      `- missingInputs: ${last.missingInputs.length}${last.missingInputs.length > 0 ? ` — ${last.missingInputs.join(', ')}` : ''}`
+    );
+    if (last.summary?.trim()) {
+      lines.push(`- summary: ${last.summary.trim()}`);
+    }
+  }
+
+  if (state.workerArtifacts.length > 0) {
+    lines.push('', `Собрано артефактов: ${state.workerArtifacts.length}`);
+  }
+
+  lines.push('---');
+  return new HumanMessage(lines.join('\n'));
+}
+
+function deriveRequestContext(state: PlannerState): CatalogRequestContext | null {
+  if (state.requestContext != null) return state.requestContext;
+  const first = state.messages[0];
+  const content = first?.content;
+  if (typeof content !== 'string') return null;
+  return { initialPrompt: content };
+}
+
 const plannerNode = async (
   state: typeof CatalogGraphStateAnnotation.State
 ): Promise<Partial<typeof CatalogGraphStateAnnotation.State>> => {
@@ -71,12 +124,14 @@ const plannerNode = async (
       const runnableModel = buildCatalogRunnableModel();
       const iteration = state.plannerIteration + 1;
       const plannerMessages = [];
+      const structuredContextMessage = buildStructuredContextMessage(state);
+      const requestContextUpdate = deriveRequestContext(state);
 
       try {
         let { response, toolCalls } = await runChainSpan(
           'catalog_agent.planner_iteration',
           async () => {
-            const llmMessages = [systemMessage, ...state.messages];
+            const llmMessages = [systemMessage, ...state.messages, structuredContextMessage];
             const response = await runLlmSpan(
               'catalog_agent.planner_iteration.llm',
               async () => runnableModel.invoke(llmMessages),
@@ -127,7 +182,7 @@ const plannerNode = async (
               activePlanSnapshot.summary,
             ].join('\n')
           );
-          const correctedLlmMessages = [systemMessage, ...state.messages, response, correctionMessage];
+          const correctedLlmMessages = [systemMessage, ...state.messages, response, correctionMessage, structuredContextMessage];
           const correctedResponse = await runLlmSpan(
             'catalog_agent.planner_iteration.correction_llm',
             async () => runnableModel.invoke(correctedLlmMessages),
@@ -152,6 +207,7 @@ const plannerNode = async (
             return {
               messages: plannerMessages,
               plannerIteration: iteration,
+              ...(requestContextUpdate != null ? { requestContext: requestContextUpdate } : {}),
               ...buildFailureState(
                 `Бригадир попытался завершить работу без tool call, хотя execution plan всё ещё активен:\n${activePlanStillOpen.summary}`
               ),
@@ -170,6 +226,7 @@ const plannerNode = async (
         return {
           messages: plannerMessages,
           plannerIteration: iteration,
+          ...(requestContextUpdate != null ? { requestContext: requestContextUpdate } : {}),
           pendingToolCalls: nextRoute === 'dispatchTools' ? toolCalls : [],
           nextRoute,
           fatalErrorMessage: null,
@@ -177,6 +234,7 @@ const plannerNode = async (
       } catch (error) {
         return {
           plannerIteration: iteration,
+          ...(requestContextUpdate != null ? { requestContext: requestContextUpdate } : {}),
           ...buildFailureState(error),
         };
       }
@@ -202,6 +260,13 @@ const plannerNode = async (
   );
 };
 
+function deriveStructuredStateFromRuns(workerRuns: WorkerRun[]) {
+  const lastWithResult = [...workerRuns].reverse().find((r) => r.result != null);
+  const latestWorkerResult = lastWithResult?.result ?? null;
+  const workerArtifacts = workerRuns.flatMap((r) => r.result?.artifacts ?? []);
+  return { latestWorkerResult, workerArtifacts };
+}
+
 const dispatchToolsNode = async (
   state: typeof CatalogGraphStateAnnotation.State
 ): Promise<Partial<typeof CatalogGraphStateAnnotation.State>> => {
@@ -220,16 +285,23 @@ const dispatchToolsNode = async (
           messages.push(toolMessage);
         }
 
+        const { latestWorkerResult, workerArtifacts } = deriveStructuredStateFromRuns(workerRuns);
+
         return {
           messages,
           workerRuns,
+          latestWorkerResult,
+          workerArtifacts,
           pendingToolCalls: [],
           fatalErrorMessage: null,
         };
       } catch (error) {
+        const { latestWorkerResult, workerArtifacts } = deriveStructuredStateFromRuns(workerRuns);
         return {
           messages,
           workerRuns,
+          latestWorkerResult,
+          workerArtifacts,
           ...buildFailureState(error),
         };
       }

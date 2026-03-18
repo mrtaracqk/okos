@@ -91,12 +91,11 @@ Telegram update
 
 Что делает:
 
-- читает tool call `delegate_to_catalog_agent`;
-- достает `userRequest`;
-- показывает progress в Telegram runtime;
+- читает tool call `delegate_to_catalog_agent` (аргументы — envelope `CatalogDelegationRequest`: goal, facts, constraints, desiredOutcome);
+- рендерит запрос в текст и показывает progress в Telegram runtime;
 - вызывает `catalogAgentGraph`;
-- получает от него итог;
-- возвращает этот итог как `ToolMessage` обратно в `messages`.
+- получает от него итог и строит `CatalogDelegationResult` (summary, result, rawText);
+- возвращает summary как `ToolMessage.content` и сохраняет structured result в state.
 
 После этого управление снова идет в `responseAgent`, и тот уже делает финальный user-facing ответ.
 

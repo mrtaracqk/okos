@@ -244,4 +244,57 @@ describe('createToolLoopGraph', () => {
     expect(result.toolRuns).toHaveLength(1);
     expect(result.toolRuns[0]?.toolName).toBe('report_worker_result');
   });
+
+  test('parses tool_calls.args when they are a JSON string (e.g. from OpenAI)', async () => {
+    let capturedArgs: Record<string, unknown> = {};
+    let invocationCount = 0;
+    const model = {
+      bindTools: () => ({
+        invoke: async () => {
+          invocationCount += 1;
+          if (invocationCount === 1) {
+            return new AIMessage({
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call_1',
+                  name: 'wc_v3_products_list',
+                  args: '{"page":1,"per_page":20,"search":"JBL Partybox Ultimate","status":"publish"}',
+                },
+              ],
+            });
+          }
+          return new AIMessage({ content: 'done' });
+        },
+      }),
+    };
+
+    const graph = createToolLoopGraph({
+      model,
+      tools: [
+        {
+          name: 'wc_v3_products_list',
+          invoke: async (input) => {
+            capturedArgs = input;
+            return {
+              ok: true,
+              structured: { result: [] },
+            };
+          },
+        },
+      ],
+      systemPrompt: () => 'system',
+    }).compile();
+
+    await graph.invoke({
+      messages: [new HumanMessage('find JBL Partybox Ultimate')],
+    });
+
+    expect(capturedArgs).toEqual({
+      page: 1,
+      per_page: 20,
+      search: 'JBL Partybox Ultimate',
+      status: 'publish',
+    });
+  });
 });
