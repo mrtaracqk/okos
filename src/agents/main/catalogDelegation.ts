@@ -3,7 +3,6 @@
  * Single envelope for all catalog delegation; text view is derived for the initial prompt.
  */
 export type CatalogDelegationRequest = {
-  requestKind?: string;
   goal: string;
   facts: string[];
   constraints: string[];
@@ -23,16 +22,12 @@ export function parseCatalogDelegationRequest(args: unknown): CatalogDelegationR
   const constraints = Array.isArray(o.constraints)
     ? (o.constraints as unknown[]).map((c) => (typeof c === 'string' ? c.trim() : '')).filter(Boolean)
     : [];
-  const requestKind = typeof o.requestKind === 'string' ? o.requestKind.trim() || undefined : undefined;
-  return { requestKind, goal, facts, constraints, desiredOutcome };
+  return { goal, facts, constraints, desiredOutcome };
 }
 
 /** Render request envelope to a single prompt string for the catalog HumanMessage. */
 export function renderCatalogDelegationRequestToPrompt(request: CatalogDelegationRequest): string {
   const parts: string[] = [];
-  if (request.requestKind?.trim()) {
-    parts.push(`Тип запроса: ${request.requestKind.trim()}`);
-  }
   parts.push(`Цель: ${request.goal.trim()}`);
   if (request.facts.length > 0) {
     parts.push(`Известные данные:\n${request.facts.map((f) => `- ${f}`).join('\n')}`);

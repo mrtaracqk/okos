@@ -3,7 +3,13 @@ import { Annotation, BaseCheckpointSaver, END, START, StateGraph, getConfig } fr
 import { buildCatalogDelegationResultFromCatalogState, catalogAgentGraph, type CatalogDelegationResult } from '../../catalog';
 import { graphCheckpointer } from '../../shared/checkpointing';
 import { extractMessageText, getLastAIMessage, getLastAIMessageText } from '../../shared/messageUtils';
-import { addTraceEvent, buildTraceAttributes, formatTraceText, runChainSpan } from '../../../observability/traceContext';
+import {
+  addTraceEvent,
+  buildTraceAttributes,
+  formatTraceText,
+  runAgentSpan,
+  runChainSpan,
+} from '../../../observability/traceContext';
 import { telegramMainGraphProgressReporter, type MainGraphProgressReporter } from '../progress';
 import { parseCatalogDelegationRequest, renderCatalogDelegationRequestToPrompt } from '../catalogDelegation';
 import { responseAgentNode } from '../nodes/responseAgent.node';
@@ -63,11 +69,17 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
         if (!request) {
           const summary =
             'Не удалось передать запрос в catalog-agent: укажи цель (goal) и желаемый результат (desiredOutcome).';
+          const delegateToolCallId =
+            typeof toolCall.id === 'string' && toolCall.id.length > 0
+              ? toolCall.id
+              : typeof toolCall.name === 'string'
+                ? toolCall.name
+                : '';
 
           return {
             messages: [
               new ToolMessage({
-                tool_call_id: toolCall.id ?? toolCall.name,
+                tool_call_id: delegateToolCallId,
                 name: toolCall.name,
                 content: summary,
               }),
@@ -86,28 +98,55 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
         });
 
         const prompt = renderCatalogDelegationRequestToPrompt(request);
-        const result = await catalogAgentGraph.invoke(
+        const result = await runAgentSpan(
+          'catalog_agent.invoke',
+          async () =>
+            catalogAgentGraph.invoke(
+              {
+                messages: [new HumanMessage(prompt)],
+              },
+              getConfig()
+            ),
           {
-            messages: [new HumanMessage(prompt)],
-          },
-          getConfig()
+            attributes: buildTraceAttributes({
+              'catalog.delegation_prompt_chars': prompt.length,
+            }),
+            mapResultAttributes: (r) =>
+              buildTraceAttributes({
+                'catalog.planner_iterations': r.plannerIteration,
+                'catalog.worker_runs': Array.isArray(r.workerRuns) ? r.workerRuns.length : 0,
+                'catalog.finalize_outcome': r.finalizeOutcome ?? undefined,
+                ...(r.fatalErrorMessage
+                  ? { 'catalog.fatal_error': formatTraceText(r.fatalErrorMessage, 500) }
+                  : {}),
+              }),
+            statusMessage: (r) => r.fatalErrorMessage ?? undefined,
+          }
         );
         const summary = getLastAIMessageText(result.messages) || 'Catalog-agent завершил работу без текстового ответа.';
         const delegationResult = buildCatalogDelegationResultFromCatalogState({
           summary,
+          finalizeOutcome: result.finalizeOutcome ?? null,
           workerRuns: Array.isArray(result.workerRuns) ? result.workerRuns : [],
         });
         addTraceEvent('agent.handoff', {
-          from_agent: 'main_graph.response_agent',
-          to_agent: 'catalog_agent',
+          from_agent: 'catalog_agent',
+          to_agent: 'main_graph.response_agent',
           'tool.name': delegateCatalogTool.name,
           status: delegationResult.status,
           'catalog.worker_runs': Array.isArray(result.workerRuns) ? result.workerRuns.length : 0,
         });
 
+        const delegateToolCallId =
+          typeof toolCall.id === 'string' && toolCall.id.length > 0
+            ? toolCall.id
+            : typeof toolCall.name === 'string'
+              ? toolCall.name
+              : '';
+
         const messages: BaseMessage[] = [
           new ToolMessage({
-            tool_call_id: toolCall.id ?? toolCall.name,
+            tool_call_id: delegateToolCallId,
             name: toolCall.name,
             content: delegationResult.summary,
           }),

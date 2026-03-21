@@ -1,5 +1,5 @@
 import { HumanMessage, isAIMessage, trimMessages } from '@langchain/core/messages';
-import { getTelegramRequestContext } from './runtime-plugins/approval';
+import { getTelegramRequestContext } from './plugins/approval';
 import { mainGraph } from './agents/main/graphs/main.graph';
 import { telegramMainGraphProgressReporter } from './agents/main/progress';
 import { createGraphRunConfig } from './agents/shared/checkpointing';

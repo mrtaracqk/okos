@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { ApprovalGate, getTelegramRequestContext, TelegramApprovalAdapter, type TelegramRequestContext } from '../runtime-plugins/approval';
+import { ApprovalGate, getTelegramRequestContext, TelegramApprovalAdapter, type TelegramRequestContext } from '../plugins/approval';
 
 const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 const approvalTimeoutMs = Number(process.env.WOOCOMMERCE_APPROVAL_TIMEOUT_MS || DEFAULT_APPROVAL_TIMEOUT_MS);

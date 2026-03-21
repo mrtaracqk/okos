@@ -68,3 +68,4 @@ export class TelegramPlanningAdapter implements PlanningProjectionAdapter {
     await TelegramService.deleteMessage(plan.chatId, plan.telegramMessageId);
   }
 }
+

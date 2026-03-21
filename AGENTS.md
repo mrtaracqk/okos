@@ -39,7 +39,7 @@ Runtime observability now goes to Phoenix spans, not Telegram `SYSTEM LOG` messa
 ## Tracing Minimum
 - Root span for one inbound Telegram turn: `assistant.turn`
 - Main graph spans: `main_graph.invoke`, `main_graph.response_agent`, `main_graph.catalog_agent_handoff`, `main_graph.final_response`
-- Catalog spans: `catalog_agent.invoke`, `catalog_agent.planner_iteration`, `catalog_agent.worker_handoff`, `catalog_agent.inspect_playbook`
+- Catalog spans (subgraph under `main_graph.catalog_agent_handoff`): `catalog_agent.invoke`, `catalog_agent.planner`, `catalog_agent.planner_iteration`, `catalog_agent.dispatch_tools`, `catalog_agent.run_execution_plan`, `catalog_agent.foreman_checkpoint`, `catalog_agent.worker_handoff`, `catalog_agent.inspect_playbook`, optional legacy `catalog_agent.manage_execution_plan`
 - Worker spans: `worker.tool_loop.agent`, `worker.tool_call`
 - Transport span: `woocommerce_transport.call_tool`
 
@@ -49,7 +49,7 @@ If a change affects orchestration, preserve trace continuity and useful attribut
 - For Telegram delivery behavior, inspect both `src/app.ts` and `src/services/telegram.ts`.
 - For memory bugs, inspect `src/handlers.ts`, `src/services/redis.ts`, and `src/agents/main/nodes/*` together.
 - For provider-specific changes, check `src/config.ts` and `src/services/ai.ts` together; vision support differs by provider.
-- For catalog orchestration changes, inspect `src/agents/catalog/catalog.agent.ts`, `src/agents/catalog/playbooks.ts`, and the relevant worker file together.
+- For catalog orchestration changes, inspect `src/agents/catalog/foreman/` (graph, `toolDispatcher`, `state`), `src/agents/catalog/playbooks/`, and the relevant worker file together.
 - For WooCommerce tool execution, inspect `src/services/wooClient.ts`, `src/services/wooToolExecutor.ts`, `src/services/toolApproval.ts`, and the relevant `src/agents/catalog/specialists/shared/wooTools/*.ts` together.
 - For observability or missing-trace issues, inspect `src/observability/phoenix.ts`, `src/observability/traceContext.ts`, `src/handlers.ts`, and the affected graph/service together.
 

@@ -26,7 +26,7 @@ import {
   type Context,
 } from '@opentelemetry/api';
 import { getConfig } from '@langchain/langgraph';
-import { getTelegramRequestContext } from '../runtime-plugins/approval';
+import { getTelegramRequestContext } from '../plugins/approval';
 import { isPhoenixTracingEnabled } from './phoenix';
 
 type PrimitiveAttribute = string | number | boolean;
@@ -252,6 +252,101 @@ function toOpenInferenceMessage(message: BaseMessage): OpenInferenceMessage {
     ...(isToolMessage(message) ? { toolCallId: message.tool_call_id } : {}),
     ...(toolCalls ? { toolCalls } : {}),
   };
+}
+
+/**
+ * Approximate byte/char weight of what the chat model receives for one message:
+ * text/multimodal content plus full tool call arguments (not truncated like trace previews).
+ */
+function approximateMessagePayloadChars(message: BaseMessage): number {
+  let total = 0;
+
+  if (typeof message.content === 'string') {
+    total += message.content.length;
+  } else if (Array.isArray(message.content)) {
+    for (const block of message.content) {
+      if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') {
+        total += block.text.length;
+      } else {
+        total += approximateSerializedLength(block);
+      }
+    }
+  } else if (message.content != null) {
+    total += approximateSerializedLength(message.content);
+  }
+
+  if (isAIMessage(message) && Array.isArray(message.tool_calls)) {
+    for (const toolCall of message.tool_calls) {
+      if (!isRecord(toolCall)) {
+        continue;
+      }
+      if (typeof toolCall.name === 'string') {
+        total += toolCall.name.length;
+      }
+      const toolArgs = toolCall.args as unknown;
+      if (toolArgs !== undefined) {
+        total += typeof toolArgs === 'string' ? toolArgs.length : approximateSerializedLength(toolArgs);
+      }
+    }
+  }
+
+  return total;
+}
+
+function approximateSerializedLength(value: unknown): number {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+  if (typeof value === 'string') {
+    return value.length;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value).length;
+  }
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return String(value).length;
+  }
+}
+
+/**
+ * Numeric diagnostics for comparing LLM calls in Phoenix (e.g. planner vs worker).
+ * `estimated_input_tokens` uses a rough chars/4 heuristic — compare runs, not billing.
+ */
+export function buildLlmInvocationDiagnostics(messages: BaseMessage[]): Attributes {
+  if (messages.length === 0) {
+    return buildTraceAttributes({
+      'llm.diagnostics.message_count': 0,
+      'llm.diagnostics.input_characters': 0,
+      'llm.diagnostics.largest_message_characters': 0,
+      'llm.diagnostics.estimated_input_tokens': 0,
+      'llm.diagnostics.messages_by_role': '',
+    });
+  }
+
+  const perMessageChars = messages.map(approximateMessagePayloadChars);
+  const inputCharacters = perMessageChars.reduce((sum, n) => sum + n, 0);
+  const largestMessageCharacters = Math.max(...perMessageChars);
+
+  const roleCounts: Record<string, number> = {};
+  for (const message of messages) {
+    const role = getMessageRole(message);
+    roleCounts[role] = (roleCounts[role] ?? 0) + 1;
+  }
+
+  const messagesByRole = Object.entries(roleCounts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([role, count]) => `${role}:${count}`)
+    .join(',');
+
+  return buildTraceAttributes({
+    'llm.diagnostics.message_count': messages.length,
+    'llm.diagnostics.input_characters': inputCharacters,
+    'llm.diagnostics.largest_message_characters': largestMessageCharacters,
+    'llm.diagnostics.estimated_input_tokens': Math.ceil(inputCharacters / 4),
+    'llm.diagnostics.messages_by_role': messagesByRole,
+  });
 }
 
 function buildLlmInputPayload(messages: BaseMessage[]) {
@@ -621,6 +716,7 @@ export function runLlmSpan<T extends BaseMessage>(
       name,
       attributes: {
         ...options.attributes,
+        ...buildLlmInvocationDiagnostics(options.inputMessages),
         ...buildTraceInputAttributes(inputMessages, 5000, MimeType.JSON),
         ...getLLMAttributes({
           provider: initialModelMetadata.provider,

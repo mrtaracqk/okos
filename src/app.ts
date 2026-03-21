@@ -2,7 +2,7 @@ import './observability/phoenix';
 import { html } from '@elysiajs/html';
 import { Elysia } from 'elysia';
 import TelegramBot from 'node-telegram-bot-api';
-import { runWithTelegramRequestContext, type TelegramRequestContext } from './runtime-plugins/approval';
+import { runWithTelegramRequestContext, type TelegramRequestContext } from './plugins/approval';
 import { handleClearHistory, handleMessage, handleSetOpenAIModel } from './handlers';
 import MessageQueueService, { MessagePayload } from './services/messageQueue';
 import { RedisService } from './services/redis';

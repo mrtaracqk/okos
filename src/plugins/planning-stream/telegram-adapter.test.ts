@@ -36,3 +36,4 @@ describe('renderRuntimePlan', () => {
     expect(renderRuntimePlan(plan)).toContain('Ответственный: attribute-worker');
   });
 });
+

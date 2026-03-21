@@ -1,5 +1,3 @@
-import type { RuntimeTelegramMessageRef } from '../shared/runtime-plugin.types';
-
 export const PLAN_TASK_OWNERS = [
   'catalog-agent',
   'category-worker',
@@ -29,6 +27,11 @@ export type RuntimePlanTask = {
   owner: PlanTaskOwner;
   status: PlanTaskStatus;
   notes?: string;
+  /**
+   * Optional executable contract for execution-driven planning.
+   * If present, execution runtime can handoff objective/facts/etc to the responsible worker.
+   */
+  execution?: RuntimePlanExecution;
 };
 
 export type RuntimePlan = {
@@ -42,6 +45,12 @@ export type RuntimePlan = {
   completedAt?: Date;
   startedAt?: Date;
   requestText?: string;
+  /**
+   * Execution-driven planning guard.
+   * When `true`, the next valid step after `foreman_checkpoint(action=replan)`
+   * is to provide a fresh executable snapshot via `run_execution_plan`.
+   */
+  replanAwaitingSnapshot?: boolean;
 };
 
 export type RuntimePlanCreateInput = {
@@ -58,7 +67,37 @@ export type RuntimePlanUpdateInput = {
 };
 
 export type PlanningProjectionAdapter = {
-  sendPlan(plan: RuntimePlan): Promise<RuntimeTelegramMessageRef | null>;
+  sendPlan(plan: RuntimePlan): Promise<{ chatId: number; messageId: number } | null>;
   updatePlan(plan: RuntimePlan): Promise<void>;
   deletePlan(plan: RuntimePlan): Promise<void>;
 };
+
+/**
+ * Executable task input shape for `run_execution_plan`.
+ * Maps to RuntimePlanTask.execution internally.
+ */
+export type ExecutableTaskOwner = Exclude<PlanTaskOwner, 'catalog-agent'>;
+
+export type ExecutableTask = {
+  taskId: string;
+  /** Responsible worker (not catalog-agent). */
+  responsible: ExecutableTaskOwner;
+  /** Objective for worker (what it should do/read). */
+  task: string;
+  inputData: {
+    facts: string[];
+    constraints: string[];
+    contextNotes?: string;
+  };
+  /** Strict worker response contract (fields + format). */
+  responseStructure: string;
+};
+
+export type RuntimePlanExecution = {
+  objective: string;
+  facts: string[];
+  constraints: string[];
+  expectedOutput: string;
+  contextNotes?: string;
+};
+

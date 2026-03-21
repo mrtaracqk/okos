@@ -1,6 +1,6 @@
-import { manageExecutionPlanTool } from '../../../runtime-plugins/planning';
 import { type CatalogWorkerToolName } from '../contracts/workerRun';
 import { inspectCatalogPlaybookTool } from './playbookInspection';
+import { foremanCheckpointTool, runExecutionPlanTool } from './executionTools';
 import { attributeWorkerDefinition } from '../specialists/attribute';
 import { categoryWorkerDefinition } from '../specialists/category';
 import { productWorkerDefinition } from '../specialists/product';
@@ -21,8 +21,8 @@ const workerRegistrationsByName = new Map<CatalogWorkerToolName, CatalogWorkerDe
 export const catalogForemanRegistry = {
   agentTools: [
     inspectCatalogPlaybookTool,
-    manageExecutionPlanTool,
-    ...workerRegistrations.map(({ handoffTool }) => handoffTool),
+    runExecutionPlanTool,
+    foremanCheckpointTool,
   ],
   resolveWorker(toolName: string): CatalogWorkerDefinition | undefined {
     return workerRegistrationsByName.get(toolName as CatalogWorkerToolName);

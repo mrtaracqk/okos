@@ -18,6 +18,7 @@ function getLastFailedWorker(workerRuns: WorkerRun[]) {
 export type BuildCatalogDelegationResultInput = {
   summary: string;
   workerRuns: WorkerRun[];
+  finalizeOutcome?: 'completed' | 'failed' | 'abandoned' | null;
 };
 
 export function buildCatalogDelegationResultFromCatalogState(
@@ -25,6 +26,13 @@ export function buildCatalogDelegationResultFromCatalogState(
 ): CatalogDelegationResult {
   const summary = input.summary.trim() || 'Catalog-agent завершил работу без текстового ответа.';
   const { workerRuns } = input;
+  if (input.finalizeOutcome === 'failed') {
+    return {
+      status: 'failed',
+      summary,
+    };
+  }
+
   const failedWorker = getLastFailedWorker(workerRuns);
 
   if (failedWorker) {

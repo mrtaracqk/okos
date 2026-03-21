@@ -255,13 +255,15 @@ describe('createToolLoopGraph', () => {
           if (invocationCount === 1) {
             return new AIMessage({
               content: '',
+              // Some providers serialize tool_call args as a JSON string.
+              // TypeScript types expect an object, so we cast for test simulation.
               tool_calls: [
                 {
                   id: 'call_1',
                   name: 'wc_v3_products_list',
                   args: '{"page":1,"per_page":20,"search":"JBL Partybox Ultimate","status":"publish"}',
                 },
-              ],
+              ] as any,
             });
           }
           return new AIMessage({ content: 'done' });
@@ -274,7 +276,7 @@ describe('createToolLoopGraph', () => {
       tools: [
         {
           name: 'wc_v3_products_list',
-          invoke: async (input) => {
+          invoke: async (input: Record<string, unknown>) => {
             capturedArgs = input;
             return {
               ok: true,

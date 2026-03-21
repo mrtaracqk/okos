@@ -45,6 +45,7 @@ function cloneTask(task: RuntimePlanTask): RuntimePlanTask {
     owner: task.owner,
     status: task.status,
     ...(task.notes ? { notes: task.notes } : {}),
+    ...(task.execution ? { execution: { ...task.execution } } : {}),
   };
 }
 
@@ -73,6 +74,30 @@ function normalizeOptionalText(value: string | undefined) {
   return normalized ? normalized : undefined;
 }
 
+function normalizeExecution(execution: RuntimePlanTask['execution'], fieldPath: string) {
+  if (!execution) return undefined;
+
+  const objective = normalizeText(execution.objective, `${fieldPath}.objective`);
+  const expectedOutput = normalizeText(execution.expectedOutput, `${fieldPath}.expectedOutput`);
+
+  if (!Array.isArray(execution.facts) || !Array.isArray(execution.constraints)) {
+    throw new PlanningRuntimeError('planning_invalid', `${fieldPath} must contain arrays facts/constraints.`);
+  }
+
+  const facts = execution.facts.map((s, i) => normalizeOptionalText(s) ?? '').filter(Boolean);
+  const constraints = execution.constraints.map((s, i) => normalizeOptionalText(s) ?? '').filter(Boolean);
+
+  const contextNotes = normalizeOptionalText(execution.contextNotes);
+
+  return {
+    objective,
+    facts,
+    constraints,
+    expectedOutput,
+    contextNotes,
+  };
+}
+
 function validateTasks(tasks: RuntimePlanTask[]) {
   if (!Array.isArray(tasks) || tasks.length === 0) {
     throw new PlanningRuntimeError('planning_invalid', 'План выполнения должен содержать хотя бы одну задачу.');
@@ -84,6 +109,7 @@ function validateTasks(tasks: RuntimePlanTask[]) {
     const taskId = normalizeText(task.taskId, `tasks[${index}].taskId`);
     const title = normalizeText(task.title, `tasks[${index}].title`);
     const notes = normalizeOptionalText(task.notes);
+    const execution = normalizeExecution(task.execution, `tasks[${index}].execution`);
 
     if (!planTaskOwners.has(task.owner)) {
       throw new PlanningRuntimeError(
@@ -114,6 +140,7 @@ function validateTasks(tasks: RuntimePlanTask[]) {
       owner: task.owner,
       status: task.status,
       ...(notes ? { notes } : {}),
+      ...(execution ? { execution } : {}),
     };
   });
 
@@ -154,8 +181,11 @@ export class PlanningCore {
       tasks: validateTasks(input.tasks),
       createdAt,
       updatedAt: createdAt,
+      replanAwaitingSnapshot: false,
       ...(input.startedAt ? { startedAt: new Date(input.startedAt) } : {}),
-      ...(normalizeOptionalText(input.requestText) ? { requestText: normalizeOptionalText(input.requestText) } : {}),
+      ...(normalizeOptionalText(input.requestText)
+        ? { requestText: normalizeOptionalText(input.requestText) }
+        : {}),
     };
 
     if (!Number.isInteger(plan.chatId)) {
@@ -180,6 +210,15 @@ export class PlanningCore {
     plan.updatedAt = this.now();
 
     await this.publishPlan(plan);
+    return clonePlan(plan);
+  }
+
+  async setReplanAwaitingSnapshot(runId: string, awaiting: boolean): Promise<RuntimePlan> {
+    const plan = this.getRequiredActivePlan(runId);
+    plan.replanAwaitingSnapshot = awaiting;
+    plan.updatedAt = this.now();
+    // Internal checkpoint flag only — not part of Telegram projection (renderRuntimePlan).
+    // Calling publishPlan here duplicated the previous edit with identical text.
     return clonePlan(plan);
   }
 
@@ -273,3 +312,4 @@ export class PlanningCore {
     }
   }
 }
+

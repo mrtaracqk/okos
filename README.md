@@ -188,7 +188,7 @@ Phoenix is the primary runtime tracing backend for `op-assistant`.
 
 - One Telegram user turn maps to root span `assistant.turn`
 - Main orchestration is traced through spans like `main_graph.invoke`, `main_graph.response_agent`, and `main_graph.catalog_agent_handoff`
-- Catalog planning and worker execution are traced through `catalog_agent.invoke`, `catalog_agent.planner_iteration`, `catalog_agent.worker_handoff`, `worker.tool_loop.agent`, and `worker.tool_call`
+- Catalog planning and execution are traced through `catalog_agent.invoke` (inside `main_graph.catalog_agent_handoff`), `catalog_agent.planner_iteration`, `catalog_agent.run_execution_plan`, `catalog_agent.foreman_checkpoint`, `catalog_agent.worker_handoff`, `worker.tool_loop.agent`, and `worker.tool_call`
 - Woo tool execution is traced via `woocommerce_transport.call_tool` (span name kept for compatibility)
 
 Technical execution logs are no longer sent back to Telegram as `SYSTEM LOG`. For debugging orchestration, inspect Phoenix first.

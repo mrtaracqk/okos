@@ -1,6 +1,5 @@
 import { type ToolRun } from '../../shared/toolLoopGraph';
 import { type CatalogWorkerToolName, type WorkerRun } from '../contracts/workerRun';
-import { type WorkerRequestMode } from '../contracts/workerRequest';
 import { WORKER_RESULT_TOOL_NAME, type WorkerResultStatus } from '../contracts/workerResult';
 
 export function getWorkerFailure(toolRuns: ToolRun[]) {
@@ -24,13 +23,12 @@ export function getLastFailedWorker(workerRuns: WorkerRun[]) {
   return undefined;
 }
 
-export function buildNoToolCallFailure(workerName: CatalogWorkerToolName, task: string, mode: WorkerRequestMode): ToolRun {
+export function buildNoToolCallFailure(workerName: CatalogWorkerToolName, task: string): ToolRun {
   return {
     toolName: '(no tool call)',
     args: {
       worker: workerName,
       task,
-      mode,
     },
     status: 'failed',
     structured: null,

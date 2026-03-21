@@ -1,4 +1,4 @@
-import { getPlanningRunContext, getPlanningRuntime } from '../../../runtime-plugins/planning';
+import { getPlanningRunContext, getPlanningRuntime } from '../../../runtime/planning';
 
 export function getCatalogAgentRuntimeRunId() {
   return getPlanningRunContext()?.runId ?? null;

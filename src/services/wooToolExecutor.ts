@@ -4,18 +4,18 @@ import {
   buildTraceOutputAttributes,
   formatTraceValue,
   runToolSpan,
-} from '../../observability/traceContext';
-import { isApprovalGateError } from '../../plugins/approval';
-import { WooApiError } from '../woo-sdk/src/core/http';
-import { getWooClient } from './wooClient';
-import { runToolWithApprovalWhenRequested } from '../toolApproval';
+} from '../observability/traceContext';
+import { isApprovalGateError } from '../plugins/approval';
+import { WooApiError } from './woo-sdk/src/core/http';
+import { getWooClient } from './woo/wooClient';
+import { runToolWithApprovalWhenRequested } from './toolApproval';
 import {
   buildToolSuccess,
   normalizeToolFailure,
   normalizeToolFailureFromError,
   type NormalizedToolResult,
-} from './wooToolResult';
-import type { WooClient } from '../woo-sdk/src/client';
+} from './woo/wooToolResult';
+import type { WooClient } from './woo-sdk/src/client';
 
 export type WooToolExecutorRun = (client: WooClient) => Promise<unknown>;
 

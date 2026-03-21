@@ -1,5 +1,5 @@
 import { Queue, Worker } from 'bullmq';
-import type { TelegramRequestContext } from '../runtime-plugins/approval';
+import type { TelegramRequestContext } from '../plugins/approval';
 import { QUEUE_CONFIG } from '../config';
 import { RedisService } from './redis';
 

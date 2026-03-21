@@ -45,7 +45,7 @@ export const CatalogGraphStateAnnotation = Annotation.Root({
     reducer: (_, newValue) => newValue,
     default: () => 'finalize',
   }),
-  finalizeOutcome: Annotation<'failed' | 'abandoned' | null>({
+  finalizeOutcome: Annotation<'completed' | 'failed' | 'abandoned' | null>({
     reducer: (_, newValue) => newValue,
     default: () => null,
   }),

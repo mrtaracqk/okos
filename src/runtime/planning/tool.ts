@@ -2,7 +2,7 @@ import { tool } from '@langchain/core/tools';
 import { getConfig } from '@langchain/langgraph';
 import { z } from 'zod';
 import { PlanningCore, isPlanningRuntimeError } from './core';
-import { TelegramPlanningAdapter } from './telegram-adapter';
+import { TelegramPlanningAdapter } from '../../plugins/planning-stream/telegram-adapter';
 import { PLAN_TASK_OWNERS, PLAN_TASK_STATUSES } from './types';
 
 export const EXECUTION_PLAN_REQUIRED_MESSAGE = 'Сначала создай план выполнения.';
@@ -14,6 +14,15 @@ const runtimePlanTaskSchema = z.object({
   owner: z.enum(PLAN_TASK_OWNERS),
   status: z.enum(PLAN_TASK_STATUSES),
   notes: z.string().optional(),
+  execution: z
+    .object({
+      objective: z.string(),
+      facts: z.array(z.string()).default([]),
+      constraints: z.array(z.string()).default([]),
+      expectedOutput: z.string(),
+      contextNotes: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const manageExecutionPlanInputSchema = z.object({
@@ -93,9 +102,7 @@ export const manageExecutionPlanTool = tool(
             requestText: runtimeContext.requestText,
           });
 
-          return formatPlanMutationResult(
-            `Создан план с количеством задач: ${plan.tasks.length}.`
-          );
+          return formatPlanMutationResult(`Создан план с количеством задач: ${plan.tasks.length}.`);
         }
         case 'update': {
           if (!input.tasks) {
@@ -133,3 +140,4 @@ export const manageExecutionPlanTool = tool(
     schema: manageExecutionPlanInputSchema,
   }
 );
+

@@ -4,10 +4,6 @@ import { z } from 'zod';
 const workerHandoffDescription = 'Это graph handoff-инструмент. Внешний граф направляет вызов нужному воркеру.';
 
 const workerHandoffSchema = z.object({
-  mode: z
-    .enum(['execute', 'consult'])
-    .optional()
-    .describe('Режим: execute — действие/чтение в зоне воркера, consult — консультационный ответ.'),
   objective: z
     .string()
     .describe('Локальная задача в зоне ответственности воркера. Не описывай общую цель и шаги других агентов.'),

@@ -24,7 +24,7 @@ function createOpenAIModel(modelName: string, temperature: number) {
     ...(process.env.OPENAI_API_KEY ? { apiKey: process.env.OPENAI_API_KEY } : {}),
     modelName,
     temperature,
-    maxRetries: 2,
+    maxRetries: 3,
     supportsStrictToolCalling: false,
     ...(OPENAI_BASE_URL
       ? {
@@ -51,7 +51,7 @@ export function createOpenAITokenCounter(modelName = openAIChatModelConfig.getCu
 }
 
 function createChatModel(type: 'chat' | 'utility') {
-  const temperature = type === 'chat' ? 0.5 : 0;
+  const temperature = type === 'chat' ? 1 : 0;
   const provider = type === 'utility' ? MODEL_UTILITY_PROVIDER || MODEL_PROVIDER : MODEL_PROVIDER;
   let chatModel: ChatModelInstance;
 

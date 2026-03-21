@@ -1,11 +1,8 @@
-export type WorkerRequestMode = 'execute' | 'consult';
-
 /**
  * Shared envelope for handoff from planner to worker. Single canonical shape
  * without scenario-specific schemas. Text views are derived from this.
  */
 export type WorkerTaskEnvelope = {
-  mode: WorkerRequestMode;
   objective: string;
   facts: string[];
   constraints: string[];
@@ -14,7 +11,6 @@ export type WorkerTaskEnvelope = {
 };
 
 export type WorkerRequest = {
-  mode: WorkerRequestMode;
   whatToDo: string;
   dataForExecution?: string;
   whyNow: string;
@@ -26,7 +22,6 @@ export type WorkerRequest = {
  * dispatcher converts to WorkerTaskEnvelope.
  */
 export type HandoffToolArgs = {
-  mode?: unknown;
   objective?: string;
   facts?: string;
   constraints?: string;
@@ -44,14 +39,12 @@ function splitNonEmptyLines(value: string | undefined): string[] {
 
 /** Build WorkerTaskEnvelope from handoff tool args (envelope-shaped). */
 export function parseHandoffArgsToEnvelope(args: HandoffToolArgs): WorkerTaskEnvelope {
-  const mode = normalizeWorkerRequestMode(args.mode);
   const objective = typeof args.objective === 'string' ? args.objective.trim() : '';
   const facts = splitNonEmptyLines(args.facts);
   const constraints = splitNonEmptyLines(args.constraints);
   const expectedOutput = typeof args.expectedOutput === 'string' ? args.expectedOutput.trim() : '';
   const contextNotes = typeof args.contextNotes === 'string' ? args.contextNotes.trim() || undefined : undefined;
   return {
-    mode,
     objective,
     facts,
     constraints,
@@ -63,7 +56,6 @@ export function parseHandoffArgsToEnvelope(args: HandoffToolArgs): WorkerTaskEnv
 /** Build envelope from legacy WorkerRequest (e.g. from tool args). */
 export function toWorkerTaskEnvelope(request: WorkerRequest): WorkerTaskEnvelope {
   return {
-    mode: request.mode,
     objective: request.whatToDo.trim(),
     facts: request.dataForExecution?.trim() ? [request.dataForExecution.trim()] : [],
     constraints: [],
@@ -74,14 +66,6 @@ export function toWorkerTaskEnvelope(request: WorkerRequest): WorkerTaskEnvelope
 
 const EMPTY_EXECUTION_DATA = 'Нет дополнительных данных.';
 
-export function normalizeWorkerRequestMode(value: unknown): WorkerRequestMode {
-  return value === 'consult' ? 'consult' : 'execute';
-}
-
-export function requiresWorkerToolCall(mode: WorkerRequestMode) {
-  return mode === 'execute';
-}
-
 export function buildWorkerInput(request: WorkerRequest) {
   const dataForExecution =
     request.dataForExecution && request.dataForExecution.trim().length > 0
@@ -89,7 +73,6 @@ export function buildWorkerInput(request: WorkerRequest) {
       : EMPTY_EXECUTION_DATA;
 
   return [
-    `Режим запроса: ${request.mode}`,
     `Что сделать:\n${request.whatToDo.trim()}`,
     `Данные для выполнения:\n${dataForExecution}`,
     `Почему это нужно сделать сейчас:\n${request.whyNow.trim()}`,
@@ -108,7 +91,6 @@ export function buildWorkerInputFromEnvelope(envelope: WorkerTaskEnvelope) {
       : [];
 
   return [
-    `Режим запроса: ${envelope.mode}`,
     `Что сделать:\n${envelope.objective}`,
     `Данные для выполнения:\n${dataForExecution}`,
     ...constraintsBlock,

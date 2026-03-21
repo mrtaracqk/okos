@@ -1,4 +1,4 @@
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from '@langchain/core/messages';
 import { BaseCheckpointSaver, END, START, StateGraph } from '@langchain/langgraph';
 import { chatModel } from '../../../config';
 import {
@@ -11,14 +11,14 @@ import {
   summarizeToolCallNames,
 } from '../../../observability/traceContext';
 import { PROMPTS } from '../../../prompts';
-import { getPlanningRuntime } from '../../../runtime-plugins/planning';
+import { getPlanningRuntime } from '../../../runtime/planning';
 import { getLastAIMessageText } from '../../shared/messageUtils';
 import { renderPlaybookIndexForPrompt } from '../playbooks';
 import { type WorkerRun } from '../contracts/workerRun';
 import { type WorkerResultEnvelope } from '../contracts/workerResult';
 import { finalizeCatalogExecutionPlan, getCatalogAgentRuntimeRunId } from './planning';
 import { type CatalogForemanRoute, type CatalogRequestContext, CatalogGraphStateAnnotation } from './state';
-import { executeCatalogToolCall } from './toolDispatcher';
+import { type CatalogToolCompletion, executeCatalogToolCall } from './toolDispatcher';
 import { getLastFailedWorker } from './workerRunState';
 import { catalogForemanRegistry } from './workerRegistry';
 
@@ -138,6 +138,12 @@ const plannerNode = async (
               {
                 inputMessages: llmMessages,
                 model: runnableModel,
+                attributes: buildTraceAttributes({
+                  'catalog.planner.iteration': iteration,
+                  'catalog.planner.branch': 'iteration',
+                  'catalog.planner.worker_runs': state.workerRuns.length,
+                  'catalog.planner.latest_worker_status': state.latestWorkerResult?.status ?? '(none)',
+                }),
               }
             );
             const toolCalls = Array.isArray(response.tool_calls) ? response.tool_calls : [];
@@ -174,10 +180,10 @@ const plannerNode = async (
           const correctionMessage = new HumanMessage(
             [
               'Execution plan всё ещё активен. Нельзя завершать задачу свободным текстом, пока активный план не закрыт.',
-              'Сделай одно из двух:',
-              '- либо вызови следующий worker / manage_execution_plan action=update',
-              '- либо закрой активный план через manage_execution_plan action=complete|fail',
-              'Если следующий шаг относится к variation-worker, делегируй его сейчас.',
+              'Сделай один из следующих шагов:',
+              '- вызови `foreman_checkpoint(action=approve)` (runtime запустит следующую pending подзадачу)',
+              '- вызови `foreman_checkpoint(action=replan)` и затем пересобери хвост через `run_execution_plan([...])`',
+              '- или закрой план через `foreman_checkpoint(action=complete|fail, result.summary=...)`; runtime сразу завершит граф этим итогом',
               'Текущий активный план:',
               activePlanSnapshot.summary,
             ].join('\n')
@@ -189,6 +195,11 @@ const plannerNode = async (
             {
               inputMessages: correctedLlmMessages,
               model: runnableModel,
+              attributes: buildTraceAttributes({
+                'catalog.planner.iteration': iteration,
+                'catalog.planner.branch': 'correction',
+                'catalog.planner.worker_runs': state.workerRuns.length,
+              }),
             }
           );
           const correctedToolCalls = Array.isArray(correctedResponse.tool_calls) ? correctedResponse.tool_calls : [];
@@ -223,8 +234,26 @@ const plannerNode = async (
           'catalog.tool_call_count': toolCalls.length,
         });
 
+        // OpenAI rejects requests where an assistant message has tool_calls but no matching ToolMessage
+        // follows. plannerLimitFallback invokes the model again, so we must close those ids here.
+        const messagesForState =
+          nextRoute === 'plannerLimitFallback' && toolCalls.length > 0
+            ? [
+                ...plannerMessages,
+                ...toolCalls.map(
+                  (tc) =>
+                    new ToolMessage({
+                      tool_call_id:
+                        typeof tc.id === 'string' && tc.id.length > 0 ? tc.id : (typeof tc.name === 'string' ? tc.name : ''),
+                      name: tc.name,
+                      content: `Достигнут лимит итераций планировщика (${MAX_PLANNER_ITERATIONS}). Tool call не выполнялся; дальше отработает fallback.`,
+                    })
+                ),
+              ]
+            : plannerMessages;
+
         return {
-          messages: plannerMessages,
+          messages: messagesForState,
           plannerIteration: iteration,
           ...(requestContextUpdate != null ? { requestContext: requestContextUpdate } : {}),
           pendingToolCalls: nextRoute === 'dispatchTools' ? toolCalls : [],
@@ -275,17 +304,61 @@ const dispatchToolsNode = async (
     async () => {
       const workerRuns = [...state.workerRuns];
       const messages = [];
+      let completion: CatalogToolCompletion | null = null;
+      const runId = getCatalogAgentRuntimeRunId();
+      const activePlan = runId ? getPlanningRuntime().getActivePlan(runId) : null;
+      const sequencedToolNames = new Set([
+        'run_execution_plan',
+        'foreman_checkpoint',
+        'run_category_worker',
+        'run_attribute_worker',
+        'run_product_worker',
+        'run_variation_worker',
+      ]);
+      const hasSequencedToolCall = state.pendingToolCalls.some((t) => sequencedToolNames.has(t.name));
+      const gateProtocolMode = Boolean(activePlan) || hasSequencedToolCall;
 
       try {
-        for (const toolCall of state.pendingToolCalls) {
-          const { run, toolMessage } = await executeCatalogToolCall(toolCall, workerRuns);
+        for (let idx = 0; idx < state.pendingToolCalls.length; idx++) {
+          const toolCall = state.pendingToolCalls[idx];
+
+          if (idx > 0 && gateProtocolMode) {
+            // Stage 1 contract: `planner -> run_execution_plan -> worker -> foreman_checkpoint`
+            // must not be bypassed by multiple tool calls in a single LLM response.
+            // We still return ToolMessages for ignored calls to keep tool-call protocol consistent.
+            const toolCallId =
+              typeof toolCall.id === 'string' && toolCall.id.length > 0
+                ? toolCall.id
+                : typeof toolCall.name === 'string'
+                  ? toolCall.name
+                  : '';
+            messages.push(
+              new ToolMessage({
+                tool_call_id: toolCallId,
+                name: toolCall.name,
+                content:
+                  'Протокол выполнения: в одном ответе выполняй только один tool call. Дополнительный tool call ' +
+                  `"${toolCall.name}"` +
+                  ' не выполнен; повтори его в следующей итерации после checkpoint.',
+              })
+            );
+            continue;
+          }
+
+          const { run, toolMessage, completion: toolCompletion } = await executeCatalogToolCall(toolCall, workerRuns);
           if (run) {
             workerRuns.push(run);
           }
           messages.push(toolMessage);
+          if (toolCompletion) {
+            completion = toolCompletion;
+          }
         }
 
         const { latestWorkerResult, workerArtifacts } = deriveStructuredStateFromRuns(workerRuns);
+        if (completion) {
+          messages.push(new AIMessage(completion.summary));
+        }
 
         return {
           messages,
@@ -293,6 +366,8 @@ const dispatchToolsNode = async (
           latestWorkerResult,
           workerArtifacts,
           pendingToolCalls: [],
+          nextRoute: completion ? 'finalize' : 'dispatchTools',
+          finalizeOutcome: completion?.finalizeOutcome ?? null,
           fatalErrorMessage: null,
         };
       } catch (error) {
@@ -340,6 +415,11 @@ const plannerLimitFallbackNode = async (
           {
             inputMessages: llmMessages,
             model: runnableModel,
+            attributes: buildTraceAttributes({
+              'catalog.planner.iteration': state.plannerIteration,
+              'catalog.planner.branch': 'limit_fallback',
+              'catalog.planner.worker_runs': state.workerRuns.length,
+            }),
           }
         );
 
@@ -381,10 +461,15 @@ const finalizeNode = async (
         return {};
       }
 
+      const outcome = state.finalizeOutcome ?? 'abandoned';
+      if (outcome === 'completed') {
+        return {};
+      }
+
       try {
         await finalizeCatalogExecutionPlan({
           runId,
-          outcome: state.finalizeOutcome ?? 'abandoned',
+          outcome,
         });
       } catch (error) {
         console.warn('Не удалось финализировать план выполнения:', error);
@@ -418,7 +503,7 @@ function getPlannerRoute(state: typeof CatalogGraphStateAnnotation.State) {
 }
 
 function getPostDispatchRoute(state: typeof CatalogGraphStateAnnotation.State) {
-  return state.fatalErrorMessage ? 'finalize' : 'planner';
+  return state.fatalErrorMessage || state.finalizeOutcome != null ? 'finalize' : 'planner';
 }
 
 function getPostFinalizeRoute(state: typeof CatalogGraphStateAnnotation.State) {
