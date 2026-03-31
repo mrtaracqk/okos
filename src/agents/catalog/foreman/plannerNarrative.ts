@@ -1,5 +1,6 @@
 import type { RuntimePlan, RuntimePlanExecution } from '../../../runtime/planning/types';
 import type { WorkerRun } from '../contracts/workerRun';
+import { type WorkerResultBlocker } from '../contracts/workerResult';
 import { renderWorkerResultEnvelopeSummary } from '../contracts/workerResult';
 
 const MAX_OBJECTIVE = 240;
@@ -66,10 +67,17 @@ function workerOutcomeLines(run: WorkerRun): string[] {
     if (run.result.missingInputs.length > 0) {
       lines.push(`Не хватает: ${run.result.missingInputs.join('; ')}`);
     }
+    if (run.result.blocker) {
+      lines.push(`Блокер: ${formatBlocker(run.result.blocker)}`);
+    }
   } else {
     lines.push(`Служебное сообщение: ${truncate(run.details || run.task || '(нет)', 1400)}`);
   }
   return lines;
+}
+
+function formatBlocker(blocker: WorkerResultBlocker): string {
+  return `${blocker.kind} -> ${blocker.owner}: ${truncate(blocker.reason, MAX_OBJECTIVE)}`;
 }
 
 export type PlannerSubtaskNarrativePhase = 'new_execution_plan' | 'approve_step';
@@ -88,6 +96,7 @@ export function buildPlannerSubtaskNarrative(options: {
   const title = completedTask?.title ?? completedTaskId;
   const owner = completedTask?.owner ?? run.agent;
   const planStatus = completedTask?.status ?? '(нет в плане)';
+  const blocker = run.result?.blocker;
 
   const lines: string[] = [
     'Итог выполненной подзадачи:',
@@ -108,8 +117,10 @@ export function buildPlannerSubtaskNarrative(options: {
       `${nextPending.taskId} — ${truncate(nextPending.title, 200)} · ${nextPending.owner}`,
       '',
       'На вход следующему воркеру уйдёт только то, что записано в плане ниже. Отчёт сверху в этот список сам не добавляется.',
-      'Если шаг прошёл успешно и этот вход всё ещё подходит — вызови approve_step.',
-      'Если нужно обновить вход для оставшихся шагов или изменить список шагов — new_execution_plan.',
+      blocker
+        ? `Текущий worker вернул blocker (${formatBlocker(blocker)}). Обычно здесь нужен new_execution_plan, а не approve_step.`
+        : 'Если шаг прошёл успешно и этот вход всё ещё подходит — вызови approve_step.',
+      'Если нужно обновить вход для оставшихся шагов, сменить owner или изменить список шагов — new_execution_plan.',
       '',
       'Вход для следующего шага:',
       ...formatNextStepInput(nextPending.execution)
@@ -123,7 +134,9 @@ export function buildPlannerSubtaskNarrative(options: {
     );
   } else {
     lines.push(
-      'Очереди подзадач нет. Либо закрой работу: finish_execution_plan (summary — ответ пользователю), либо набери новый план: new_execution_plan, если запрос ещё не закрыт.'
+      blocker
+        ? `Очереди подзадач нет, а worker вернул blocker (${formatBlocker(blocker)}). Либо перестрой план на нужного owner через new_execution_plan, либо закрой работу через finish_execution_plan, если запрос упёрся в недостающий вход.`
+        : 'Очереди подзадач нет. Либо закрой работу: finish_execution_plan (summary — ответ пользователю), либо набери новый план: new_execution_plan, если запрос ещё не закрыт.'
     );
   }
 

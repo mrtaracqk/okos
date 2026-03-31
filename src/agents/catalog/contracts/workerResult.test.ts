@@ -34,7 +34,7 @@ describe('workerResult', () => {
         note: null,
       })
     ).toBe(
-      'Статус:\n- failed\n\nДанные:\n- нет\n\nНедостающие данные:\n- product_id\n\nЗаметка:\n- нет'
+      'Статус:\n- failed\n\nДанные:\n- нет\n\nНедостающие данные:\n- product_id\n\nБлокер:\n- нет\n\nЗаметка:\n- нет'
     );
   });
 
@@ -64,6 +64,32 @@ describe('workerResult', () => {
     });
     expect(out).toContain('Резюме:');
     expect(out).toContain('Товар создан.');
+  });
+
+  it('normalizes structured blocker payloads', () => {
+    expect(
+      normalizeWorkerResult({
+        status: 'failed',
+        data: [],
+        missingData: ['Создать term Black для attribute Color'],
+        note: 'Продолжение упирается в чужую мутацию.',
+        blocker: {
+          kind: 'external_mutation_required',
+          owner: 'attribute-worker',
+          reason: 'Нужно создать term Black у глобального атрибута Color.',
+        },
+      })
+    ).toEqual({
+      status: 'failed',
+      data: [],
+      missingData: ['Создать term Black для attribute Color'],
+      note: 'Продолжение упирается в чужую мутацию.',
+      blocker: {
+        kind: 'external_mutation_required',
+        owner: 'attribute-worker',
+        reason: 'Нужно создать term Black у глобального атрибута Color.',
+      },
+    });
   });
 
   it('extracts the last structured worker result from tool runs', () => {
@@ -109,6 +135,25 @@ describe('workerResult', () => {
     expect(envelope.summary).toBe('Категория подтверждена.');
   });
 
+  it('preserves blocker in WorkerResultEnvelope', () => {
+    const envelope = workerResultToEnvelope({
+      status: 'failed',
+      data: [],
+      missingData: ['Создать attribute Color'],
+      note: null,
+      blocker: {
+        kind: 'wrong_owner',
+        owner: 'attribute-worker',
+        reason: 'Шаг относится к глобальным атрибутам, а не к карточке товара.',
+      },
+    });
+    expect(envelope.blocker).toEqual({
+      kind: 'wrong_owner',
+      owner: 'attribute-worker',
+      reason: 'Шаг относится к глобальным атрибутам, а не к карточке товара.',
+    });
+  });
+
   it('workerResultToEnvelope uses summary when set, else note', () => {
     const withSummary = workerResultToEnvelope({
       status: 'failed',
@@ -136,6 +181,23 @@ describe('workerResult', () => {
     });
     expect(out).toContain('Статус: completed');
     expect(out).toContain('Done.');
+  });
+
+  it('renderWorkerResultEnvelopeSummary falls back to blocker when present', () => {
+    const out = renderWorkerResultEnvelopeSummary({
+      status: 'failed',
+      facts: [],
+      missingInputs: ['Создать term Black'],
+      blocker: {
+        kind: 'external_mutation_required',
+        owner: 'attribute-worker',
+        reason: 'Нужно создать term Black у атрибута Color.',
+      },
+      summary: null,
+    });
+    expect(out).toContain('Статус: failed');
+    expect(out).toContain('Блокер: external_mutation_required -> attribute-worker');
+    expect(out).toContain('Нужно создать term Black у атрибута Color.');
   });
 
   it('renderWorkerResultEnvelopeSummary falls back to counts and first fact when no summary', () => {
