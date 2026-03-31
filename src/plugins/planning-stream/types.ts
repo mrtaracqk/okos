@@ -12,7 +12,6 @@ export const PLAN_TASK_STATUSES = [
   'pending',
   'in_progress',
   'completed',
-  'blocked',
   'failed',
   'skipped',
 ] as const;

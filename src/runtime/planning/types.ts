@@ -10,7 +10,6 @@ export const PLAN_TASK_STATUSES = [
   'pending',
   'in_progress',
   'completed',
-  'blocked',
   'failed',
   'skipped',
 ] as const;
@@ -45,12 +44,6 @@ export type RuntimePlan = {
   completedAt?: Date;
   startedAt?: Date;
   requestText?: string;
-  /**
-   * Execution-driven planning guard.
-   * When `true`, the next valid step after `foreman_checkpoint(action=replan)`
-   * is to provide a fresh executable snapshot via `run_execution_plan`.
-   */
-  replanAwaitingSnapshot?: boolean;
 };
 
 export type RuntimePlanCreateInput = {
@@ -73,7 +66,7 @@ export type PlanningProjectionAdapter = {
 };
 
 /**
- * Executable task input shape for `run_execution_plan`.
+ * Executable task input shape for `new_execution_plan`.
  * Maps to RuntimePlanTask.execution internally.
  */
 export type ExecutableTaskOwner = Exclude<PlanTaskOwner, 'catalog-agent'>;

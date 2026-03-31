@@ -1,10 +1,12 @@
 import { chatModel } from '../../../config';
 import { PROMPTS } from '../../../prompts';
+import { CATALOG_WORKER_KNOWLEDGE } from '../catalogWorkerKnowledge';
 import { WORKER_RESULT_TOOL_NAME, createWorkerResultTool } from '../contracts/workerResult';
 import { createToolLoopGraph } from '../../shared/toolLoopGraph';
 import { attributeWorkerWooTools } from './shared/wooTools/attributeTools';
-import { createCatalogWorkerHandoffTool } from './shared/handoffTool';
 import { type CatalogWorkerDefinition } from './shared/workerDefinition';
+
+const k = CATALOG_WORKER_KNOWLEDGE['attribute-worker'];
 
 const attributeWorkerTools = [...attributeWorkerWooTools, createWorkerResultTool()];
 
@@ -23,10 +25,6 @@ export const attributeWorkerGraph = buildAttributeWorkerGraph().compile({
 });
 
 export const attributeWorkerDefinition: CatalogWorkerDefinition = {
-  name: 'run_attribute_worker',
-  handoffTool: createCatalogWorkerHandoffTool(
-    'run_attribute_worker',
-    'Делегируй задачи по глобальной таксономии атрибутов: получить список, прочитать, создать, обновить или удалить атрибуты товара и их термы; проверить нужные значения; создать или скорректировать недостающие термы. Не используй для редактирования карточки товара, назначения атрибутов товару или управления вариациями.'
-  ),
+  id: k.id,
   graph: attributeWorkerGraph,
 };

@@ -41,6 +41,27 @@ export function buildToolSuccess(structured?: unknown | null): NormalizedToolRes
   };
 }
 
+/** Woo list tools: items plus optional WP `X-WP-Total` / `X-WP-TotalPages` and echoed query. */
+export type WooPagedListPayload<T> = {
+  items: T[];
+  count: number;
+  total?: number;
+  total_pages?: number;
+  page?: number;
+  per_page?: number;
+};
+
+export function buildPagedListSuccess<T>(
+  items: T[],
+  meta: Omit<WooPagedListPayload<T>, 'items' | 'count'>
+): NormalizedToolResult {
+  return buildToolSuccess({
+    items,
+    count: items.length,
+    ...meta,
+  } satisfies WooPagedListPayload<T>);
+}
+
 export function normalizeToolFailure(input: {
   structured?: unknown | null;
   fallbackSource?: ToolErrorSource;

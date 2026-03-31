@@ -1,28 +1,45 @@
 import { z } from 'zod';
 import { createWooTool } from '../../../../../services/woo/createWooTool';
-import { buildToolSuccess } from '../../../../../services/woo/wooToolResult';
+import { getWooExecuteWithHeaders } from '../../../../../services/woo/wooClient';
+import { parseWpCollectionHeaders } from '../../../../../services/woo/wpCollectionHeaders';
+import { buildPagedListSuccess, buildToolSuccess } from '../../../../../services/woo/wooToolResult';
 import type {
   ProductsCategoriesCreateBody,
+  ProductsCategoriesListResponse,
   ProductsCategoryUpdateBody,
 } from '../../../../../services/woo-sdk/src/models/products';
 
+const mapCategory = (item: ProductsCategoriesListResponse[number]) => ({
+  id: item.id,
+  name: item.name,
+  count: item.count,
+  parent: item.parent,
+  slug: item.slug,
+});
+
 const listCategoriesTool = createWooTool({
   name: 'wc.v3.products_categories_list',
-  description: 'Получить список категорий. Поиск по названию (search) и/или по родителю (parent).',
+  description:
+    'Получить список категорий. Поиск по названию (search) и/или по родителю (parent). Ответ: { items, count, total?, total_pages?, per_page }.',
   requiresApproval: false,
   schema: z.object({
     search: z.string().optional().describe('Поиск по названию категории.'),
     parent: z.number().int().optional().describe('ID родительской категории (для подкатегорий).'),
   }),
-  run: async (input, { client }) => {
-    const response = await client.products.listProductsCategories({
+  run: async (input) => {
+    const per_page = 100;
+    const { data, headers } = await getWooExecuteWithHeaders()({
+      method: 'GET',
+      routeTemplate: '/products/categories',
       query: {
         search: input.search,
         parent: input.parent,
+        per_page,
       },
     });
-    const list = Array.isArray(response) ? response : [];
-    return buildToolSuccess(list);
+    const list = Array.isArray(data) ? data : [];
+    const { total, total_pages } = parseWpCollectionHeaders(headers);
+    return buildPagedListSuccess(list.map(mapCategory), { total, total_pages, per_page });
   },
 });
 
@@ -35,7 +52,7 @@ const getCategoryTool = createWooTool({
   }),
   run: async (input, { client }) => {
     const category = await client.products.getProductsCategory({ path: { id: input.id } });
-    return buildToolSuccess(category);
+    return buildToolSuccess(mapCategory(category));
   },
 });
 

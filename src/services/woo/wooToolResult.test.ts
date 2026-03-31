@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildPagedListSuccess,
   buildToolSuccess,
   normalizeToolFailure,
   normalizeToolFailureFromError,
@@ -10,6 +11,19 @@ describe('wooToolResult', () => {
     const r = buildToolSuccess({ id: 1 });
     expect(r.ok).toBe(true);
     expect(r.structured).toEqual({ id: 1 });
+  });
+
+  test('buildPagedListSuccess includes count and meta', () => {
+    const r = buildPagedListSuccess([{ a: 1 }], { total: 42, total_pages: 2, page: 1, per_page: 20 });
+    expect(r.ok).toBe(true);
+    expect(r.structured).toEqual({
+      items: [{ a: 1 }],
+      count: 1,
+      total: 42,
+      total_pages: 2,
+      page: 1,
+      per_page: 20,
+    });
   });
 
   test('normalizeToolFailure extracts nested error and sets source', () => {

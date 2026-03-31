@@ -1,9 +1,8 @@
 import { type BaseMessage } from '@langchain/core/messages';
 import { type ToolRun } from '../../../shared/toolLoopGraph';
+import { type CatalogWorkerId } from '../../contracts/catalogWorkerId';
 import { type WorkerResultEnvelope } from '../../contracts/workerResult';
 import { type WorkerTaskEnvelope } from '../../contracts/workerRequest';
-import { type CatalogWorkerToolName } from '../../contracts/workerRun';
-import { createCatalogWorkerHandoffTool } from './handoffTool';
 
 export type CatalogWorkerResult = {
   messages: BaseMessage[];
@@ -19,7 +18,6 @@ export type CatalogWorkerRuntime = {
 };
 
 export type CatalogWorkerDefinition = {
-  name: CatalogWorkerToolName;
-  handoffTool: ReturnType<typeof createCatalogWorkerHandoffTool>;
+  id: CatalogWorkerId;
   graph: CatalogWorkerRuntime;
 };

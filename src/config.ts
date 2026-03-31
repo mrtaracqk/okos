@@ -2,7 +2,7 @@ import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { ChatGroq } from '@langchain/groq';
 import { ChatOpenAI } from '@langchain/openai';
 import { RedisService } from './services/redis';
-import { openAIChatModelConfig } from './services/openAIChatModelConfig';
+import { createOpenAIChatModelConfigFromEnv } from './services/openAIChatModelConfig';
 
 export const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 export const redisService = new RedisService();
@@ -17,11 +17,30 @@ type ModelProvider = 'google' | 'groq' | 'openai';
 export const MODEL_PROVIDER = (process.env.MODEL_PROVIDER || 'openai') as ModelProvider;
 export const MODEL_UTILITY_PROVIDER = (process.env.MODEL_UTILITY_PROVIDER || MODEL_PROVIDER) as ModelProvider;
 export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL?.trim() || undefined;
+
+export const openAIChatModelConfig = createOpenAIChatModelConfigFromEnv();
+
 type ChatModelInstance = ChatOpenAI | ChatGoogleGenerativeAI | ChatGroq;
+
+function requireOpenAIApiKey(): string {
+  const key = process.env.OPENAI_API_KEY?.trim();
+  if (!key) {
+    throw new Error('OPENAI_API_KEY is required in environment variables');
+  }
+  return key;
+}
+
+function requireOpenAIUtilityModelName(): string {
+  const name = process.env.OPENAI_UTILITY_MODEL_NAME?.trim();
+  if (!name) {
+    throw new Error('OPENAI_UTILITY_MODEL_NAME is required in environment variables');
+  }
+  return name;
+}
 
 function createOpenAIModel(modelName: string, temperature: number) {
   return new ChatOpenAI({
-    ...(process.env.OPENAI_API_KEY ? { apiKey: process.env.OPENAI_API_KEY } : {}),
+    apiKey: requireOpenAIApiKey(),
     modelName,
     temperature,
     maxRetries: 3,
@@ -38,7 +57,7 @@ function createOpenAIModel(modelName: string, temperature: number) {
 
 export function createOpenAITokenCounter(modelName = openAIChatModelConfig.getCurrentModelName()) {
   return new ChatOpenAI({
-    ...(process.env.OPENAI_API_KEY ? { apiKey: process.env.OPENAI_API_KEY } : {}),
+    apiKey: requireOpenAIApiKey(),
     modelName,
     ...(OPENAI_BASE_URL
       ? {
@@ -58,9 +77,7 @@ function createChatModel(type: 'chat' | 'utility') {
   switch (provider) {
     case 'openai':
       chatModel = createOpenAIModel(
-        type === 'chat'
-          ? openAIChatModelConfig.getCurrentModelName()
-          : process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
+        type === 'chat' ? openAIChatModelConfig.getCurrentModelName() : requireOpenAIUtilityModelName(),
         temperature
       );
       break;
@@ -82,9 +99,7 @@ function createChatModel(type: 'chat' | 'utility') {
       break;
     default:
       chatModel = createOpenAIModel(
-        type === 'chat'
-          ? openAIChatModelConfig.getCurrentModelName()
-          : process.env.OPENAI_UTILITY_MODEL_NAME || 'gpt-4o-mini',
+        type === 'chat' ? openAIChatModelConfig.getCurrentModelName() : requireOpenAIUtilityModelName(),
         temperature
       );
       break;

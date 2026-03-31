@@ -35,6 +35,11 @@ export type WooRequestExecutor = <TResponse>(
   options: ExecuteWooRequestOptions,
 ) => Promise<TResponse>;
 
+/** Same wire format as WooRequestExecutor, plus response Headers (WordPress collection pagination). */
+export type WooRequestExecutorWithHeaders = <TResponse>(
+  options: ExecuteWooRequestOptions,
+) => Promise<{ data: TResponse; headers: Headers }>;
+
 export interface WooApiErrorDetails<TData = unknown> {
   data: TData;
   headers: Headers;

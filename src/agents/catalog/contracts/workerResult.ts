@@ -4,7 +4,7 @@ import { type ToolRun } from '../../shared/toolLoopGraph';
 
 export const WORKER_RESULT_TOOL_NAME = 'report_worker_result';
 
-export type WorkerResultStatus = 'completed' | 'blocked' | 'failed';
+export type WorkerResultStatus = 'completed' | 'failed';
 
 /**
  * Shared envelope for worker result. Single canonical shape without
@@ -31,8 +31,10 @@ export type WorkerResult = {
 
 const workerResultSchema = z.object({
   status: z
-    .enum(['completed', 'blocked', 'failed'])
-    .describe('completed — шаг завершён; blocked — не хватает обязательных данных или предусловия; failed — произошло фактическое выполнение с ошибкой.'),
+    .enum(['completed', 'failed'])
+    .describe(
+      'completed — шаг завершён или дан корректный ответ; failed — ошибка выполнения или шаг невозможен без недостающих данных (укажи missingData).'
+    ),
   data: z
     .array(z.string().min(1))
     .default([])
@@ -56,8 +58,17 @@ function renderList(lines: string[], emptyValue = 'нет') {
   return lines.length > 0 ? lines.map((line) => `- ${line}`).join('\n') : `- ${emptyValue}`;
 }
 
+function coerceLegacyWorkerResultPayload(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const rec = value as Record<string, unknown>;
+  if (rec.status === 'blocked') {
+    return { ...rec, status: 'failed' };
+  }
+  return value;
+}
+
 export function normalizeWorkerResult(value: unknown): WorkerResult | null {
-  const parsed = workerResultSchema.safeParse(value);
+  const parsed = workerResultSchema.safeParse(coerceLegacyWorkerResultPayload(value));
   if (!parsed.success) {
     return null;
   }
@@ -139,7 +150,7 @@ export function createWorkerResultTool() {
     {
       name: WORKER_RESULT_TOOL_NAME,
       description:
-        'Финализируй итоговый ответ. Вызывай ровно один раз, когда вся задача завершена, заблокирована или завершилась ошибкой. После этого не вызывай другие инструменты.',
+        'Финализируй итоговый ответ. Вызывай ровно один раз, когда задача завершена успешно, невозможна без недостающих данных (status=failed + missingData) или завершилась ошибкой. После этого не вызывай другие инструменты.',
       schema: workerResultSchema,
     }
   );

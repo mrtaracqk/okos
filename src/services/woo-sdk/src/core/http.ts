@@ -11,6 +11,7 @@ import {
   WooApiErrorDetails,
   WooHeadersInit,
   WooRequestExecutor,
+  WooRequestExecutorWithHeaders,
 } from "./types";
 
 export class WooApiError<TData = unknown> extends Error {
@@ -33,6 +34,79 @@ export class WooApiError<TData = unknown> extends Error {
   }
 }
 
+type WooRawResponse = {
+  data: unknown;
+  headers: Headers;
+  ok: boolean;
+  status: number;
+  statusText: string;
+  method: ExecuteWooRequestOptions["method"];
+  url: string;
+};
+
+const runWooRequest = async (
+  config: CreateWooClientConfig,
+  options: ExecuteWooRequestOptions,
+  fetchImplementation: typeof fetch,
+): Promise<WooRawResponse> => {
+  const headers = new Headers(config.headers);
+  mergeHeaders(headers, options.headers);
+
+  const body = serializeJsonBody(options.body);
+
+  if (body !== undefined && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
+
+  if (!headers.has("accept")) {
+    headers.set("accept", "application/json");
+  }
+
+  const url = buildWooRequestUrl({
+    baseUrl: config.baseUrl,
+    path: options.path,
+    query: options.query,
+    routeTemplate: options.routeTemplate,
+  });
+
+  applyWooAuthentication(url, headers, config);
+
+  const response = await fetchImplementation(url, {
+    body,
+    headers,
+    method: options.method,
+    signal: options.signal,
+  });
+  const responseData = await parseWooResponseBody(response);
+
+  return {
+    data: responseData,
+    headers: response.headers,
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    method: options.method,
+    url: url.toString(),
+  };
+};
+
+const assertWooOk = (raw: WooRawResponse): void => {
+  if (raw.ok) {
+    return;
+  }
+  throw new WooApiError(
+    `Woo request failed with ${raw.status} ${raw.statusText}.`,
+    {
+      data: raw.data,
+      headers: raw.headers,
+      method: raw.method,
+      status: raw.status,
+      statusText: raw.statusText,
+      url: raw.url,
+    },
+  );
+};
+
 export const createWooRequestExecutor = (
   config: CreateWooClientConfig,
 ): WooRequestExecutor => {
@@ -47,51 +121,33 @@ export const createWooRequestExecutor = (
   return async <TResponse>(
     options: ExecuteWooRequestOptions,
   ): Promise<TResponse> => {
-    const headers = new Headers(config.headers);
-    mergeHeaders(headers, options.headers);
+    const raw = await runWooRequest(config, options, fetchImplementation);
+    assertWooOk(raw);
+    return raw.data as TResponse;
+  };
+};
 
-    const body = serializeJsonBody(options.body);
+/**
+ * Same requests as {@link createWooRequestExecutor}, but exposes response headers for collection endpoints
+ * (`X-WP-Total`, `X-WP-TotalPages`).
+ */
+export const createWooRequestExecutorWithHeaders = (
+  config: CreateWooClientConfig,
+): WooRequestExecutorWithHeaders => {
+  const fetchImplementation = config.fetch ?? globalThis.fetch;
 
-    if (body !== undefined && !headers.has("content-type")) {
-      headers.set("content-type", "application/json");
-    }
+  if (!fetchImplementation) {
+    throw new Error(
+      "Woo client requires a fetch implementation via config.fetch or globalThis.fetch.",
+    );
+  }
 
-    if (!headers.has("accept")) {
-      headers.set("accept", "application/json");
-    }
-
-    const url = buildWooRequestUrl({
-      baseUrl: config.baseUrl,
-      path: options.path,
-      query: options.query,
-      routeTemplate: options.routeTemplate,
-    });
-
-    applyWooAuthentication(url, headers, config);
-
-    const response = await fetchImplementation(url, {
-      body,
-      headers,
-      method: options.method,
-      signal: options.signal,
-    });
-    const responseData = await parseWooResponseBody(response);
-
-    if (!response.ok) {
-      throw new WooApiError(
-        `Woo request failed with ${response.status} ${response.statusText}.`,
-        {
-          data: responseData,
-          headers: response.headers,
-          method: options.method,
-          status: response.status,
-          statusText: response.statusText,
-          url: url.toString(),
-        },
-      );
-    }
-
-    return responseData as TResponse;
+  return async <TResponse>(
+    options: ExecuteWooRequestOptions,
+  ): Promise<{ data: TResponse; headers: Headers }> => {
+    const raw = await runWooRequest(config, options, fetchImplementation);
+    assertWooOk(raw);
+    return { data: raw.data as TResponse, headers: raw.headers };
   };
 };
 

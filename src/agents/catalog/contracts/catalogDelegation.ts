@@ -5,6 +5,17 @@ export type CatalogDelegationResult = {
   summary: string;
 };
 
+/** Префикс для успешного итога в чате (строка из `finish_execution_plan.summary` без префикса). */
+export const CATALOG_SUCCESS_USER_PREFIX = 'Готово: ';
+
+/** Текст сообщения пользователю после делегирования в catalog-agent (детерминированно от статуса). */
+export function formatCatalogDelegationUserMessage(result: CatalogDelegationResult): string {
+  if (result.status === 'success') {
+    return `${CATALOG_SUCCESS_USER_PREFIX}${result.summary}`;
+  }
+  return result.summary;
+}
+
 function getLastFailedWorker(workerRuns: WorkerRun[]) {
   for (let index = workerRuns.length - 1; index >= 0; index -= 1) {
     const workerRun = workerRuns[index];

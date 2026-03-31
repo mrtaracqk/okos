@@ -1,8 +1,8 @@
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
+import { PLAN_WORKER_OWNERS } from '../catalogWorkerKnowledge';
 
-const WORKER_TASK_OWNERS = ['category-worker', 'attribute-worker', 'product-worker', 'variation-worker'] as const;
-const workerTaskOwnerSchema = z.enum(WORKER_TASK_OWNERS);
+const workerTaskOwnerSchema = z.enum(PLAN_WORKER_OWNERS);
 
 export const executableTaskInputSchema = z.object({
   taskId: z.string(),
@@ -16,66 +16,59 @@ export const executableTaskInputSchema = z.object({
   responseStructure: z.string(),
 });
 
-export const runExecutionPlanInputSchema = z.object({
+export const newExecutionPlanInputSchema = z.object({
   tasks: z.array(executableTaskInputSchema).min(1),
 });
 
-export type ExecutionPlanCheckpointAction = 'approve' | 'replan' | 'complete' | 'fail';
+export const approveStepInputSchema = z.object({
+  reason: z.string().optional(),
+});
 
-const foremanCompletionResultSchema = z.object({
+export const finishExecutionPlanInputSchema = z.object({
+  outcome: z.enum(['completed', 'failed']),
   summary: z.string().trim().min(1),
 });
 
-// Single root object — OpenAI tool JSON Schema requires `type: "object"`.
-// `discriminatedUnion` does not reliably serialize to a valid object schema.
-export const foremanCheckpointInputSchema = z
-  .object({
-    action: z.enum(['approve', 'replan', 'complete', 'fail']),
-    reason: z.string().optional(),
-    result: foremanCompletionResultSchema.optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (data.action === 'complete' || data.action === 'fail') {
-      const summary = data.result?.summary?.trim();
-      if (!summary) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['result', 'summary'],
-          message: 'Для action=complete|fail укажи result.summary с финальным ответом.',
-        });
-      }
-    }
-  });
-
 // NOTE: execution is implemented in `toolDispatcher.ts` (see executeCatalogToolCall switch).
-export const runExecutionPlanTool = tool(
+export const newExecutionPlanTool = tool(
   async () => {
     return {
       ok: true,
-      note: 'run_execution_plan is handled by catalog foreman dispatcher',
+      note: 'new_execution_plan is handled by catalog foreman dispatcher',
     };
   },
   {
-    name: 'run_execution_plan',
+    name: 'new_execution_plan',
     description:
-      'Запусти исполнение executable execution plan: зафиксируй задачи и выполни первую подзадачу. После выполнения верни результат для checkpoint decision.',
-    schema: runExecutionPlanInputSchema,
+      'Зафиксируй или полностью замени executable snapshot плана и запусти первую подзадачу (первая задача в списке становится in_progress). Используй, когда нужно изменить список шагов или execution (facts/constraints) для будущих задач. Если последний шаг уже успешен и следующий pending шаг можно выполнить с текущим snapshot — не пересоздавай план, вызови approve_step. После вызова придёт короткий ToolMessage и отдельное HumanMessage с итогом подзадачи — по ним выбирай approve_step, new_execution_plan или finish_execution_plan.',
+    schema: newExecutionPlanInputSchema,
   }
 );
 
-export const foremanCheckpointTool = tool(
+export const approveStepTool = tool(
   async () => {
-    return { ok: true, note: 'foreman_checkpoint is handled by catalog foreman dispatcher' };
+    return { ok: true, note: 'approve_step is handled by catalog foreman dispatcher' };
   },
   {
-    name: 'foreman_checkpoint',
+    name: 'approve_step',
     description:
-      'Checkpoint gate после результата воркера: approve — продолжить по плану, replan — запросить новый план, complete/fail — закрыть план и сразу передать финальный ответ через result.summary.',
-    schema: foremanCheckpointInputSchema,
+      'Продолжить план после результата воркера: runtime переводит следующую pending задачу в работу и запускает её. Входные данные берутся только из snapshot плана (execution у задачи); facts из предыдущего шага в следующий не подставляются автоматически. Вызывай по умолчанию, если последняя завершённая подзадача успешна (completed) и менять tasks[] не нужно. Чтобы обновить хвост или facts для следующих шагов — new_execution_plan; чтобы закончить работу — finish_execution_plan. После вызова — короткий ToolMessage и отдельное HumanMessage с итогом шага.',
+    schema: approveStepInputSchema,
   }
 );
 
-// Helpful aliases for consumers (not required by dispatcher).
-export type ExecutableTaskInput = z.infer<typeof executableTaskInputSchema>;
-export type ForemanCheckpointInput = z.infer<typeof foremanCheckpointInputSchema>;
+export const finishExecutionPlanTool = tool(
+  async () => {
+    return { ok: true, note: 'finish_execution_plan is handled by catalog foreman dispatcher' };
+  },
+  {
+    name: 'finish_execution_plan',
+    description:
+      'Завершить работу по активному плану: outcome=completed — успешный итог, outcome=failed — ошибка или невозможность выполнить запрос; summary — готовый ответ пользователю (обязателен), факты из воркеров переноси дословно, без служебных префиксов вроде «Готово:».',
+    schema: finishExecutionPlanInputSchema,
+  }
+);
 
+export type ExecutableTaskInput = z.infer<typeof executableTaskInputSchema>;
+export type ApproveStepInput = z.infer<typeof approveStepInputSchema>;
+export type FinishExecutionPlanInput = z.infer<typeof finishExecutionPlanInputSchema>;

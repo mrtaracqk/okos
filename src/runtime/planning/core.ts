@@ -181,7 +181,6 @@ export class PlanningCore {
       tasks: validateTasks(input.tasks),
       createdAt,
       updatedAt: createdAt,
-      replanAwaitingSnapshot: false,
       ...(input.startedAt ? { startedAt: new Date(input.startedAt) } : {}),
       ...(normalizeOptionalText(input.requestText)
         ? { requestText: normalizeOptionalText(input.requestText) }
@@ -210,15 +209,6 @@ export class PlanningCore {
     plan.updatedAt = this.now();
 
     await this.publishPlan(plan);
-    return clonePlan(plan);
-  }
-
-  async setReplanAwaitingSnapshot(runId: string, awaiting: boolean): Promise<RuntimePlan> {
-    const plan = this.getRequiredActivePlan(runId);
-    plan.replanAwaitingSnapshot = awaiting;
-    plan.updatedAt = this.now();
-    // Internal checkpoint flag only — not part of Telegram projection (renderRuntimePlan).
-    // Calling publishPlan here duplicated the previous edit with identical text.
     return clonePlan(plan);
   }
 

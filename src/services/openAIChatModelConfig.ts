@@ -1,4 +1,3 @@
-const DEFAULT_OPENAI_CHAT_MODEL_NAME = 'gpt-4o';
 const OPENAI_PROVIDER_PREFIX = /^openai\//i;
 
 export function normalizeOpenAIChatModelName(modelName: string): string {
@@ -9,8 +8,11 @@ export class OpenAIChatModelConfig {
   private readonly defaultModelName: string;
   private currentModelName: string;
 
-  constructor(defaultModelName = process.env.OPENAI_MODEL_NAME || DEFAULT_OPENAI_CHAT_MODEL_NAME) {
-    const normalizedDefaultModelName = normalizeOpenAIChatModelName(defaultModelName) || DEFAULT_OPENAI_CHAT_MODEL_NAME;
+  constructor(defaultModelName: string) {
+    const normalizedDefaultModelName = normalizeOpenAIChatModelName(defaultModelName);
+    if (!normalizedDefaultModelName) {
+      throw new Error('OPENAI_MODEL_NAME is invalid or empty after normalization');
+    }
     this.defaultModelName = normalizedDefaultModelName;
     this.currentModelName = normalizedDefaultModelName;
   }
@@ -26,7 +28,7 @@ export class OpenAIChatModelConfig {
   setCurrentModelName(modelName: string) {
     const normalizedModelName = normalizeOpenAIChatModelName(modelName);
     if (!normalizedModelName) {
-      throw new Error('Имя модели не задано. Использование: /set_model <model>');
+      throw new Error('Имя модели не задано после нормализации.');
     }
 
     this.currentModelName = normalizedModelName;
@@ -34,4 +36,10 @@ export class OpenAIChatModelConfig {
   }
 }
 
-export const openAIChatModelConfig = new OpenAIChatModelConfig();
+export function createOpenAIChatModelConfigFromEnv(): OpenAIChatModelConfig {
+  const raw = process.env.OPENAI_MODEL_NAME?.trim();
+  if (!raw) {
+    throw new Error('OPENAI_MODEL_NAME is required in environment variables');
+  }
+  return new OpenAIChatModelConfig(raw);
+}

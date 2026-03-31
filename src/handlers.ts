@@ -1,7 +1,11 @@
 import { HumanMessage, isAIMessage, trimMessages } from '@langchain/core/messages';
 import { getTelegramRequestContext } from './plugins/approval';
 import { mainGraph } from './agents/main/graphs/main.graph';
-import { telegramMainGraphProgressReporter } from './agents/main/progress';
+import {
+  abandonCatalogDelegationPlaceholder,
+  takeCatalogDelegationPlaceholderMessageId,
+  telegramMainGraphProgressReporter,
+} from './agents/main/progress';
 import { createGraphRunConfig } from './agents/shared/checkpointing';
 import { CHAT_CONFIG, createOpenAITokenCounter } from './config';
 import {
@@ -17,9 +21,26 @@ import {
 import { MimeType } from '@arizeai/openinference-semantic-conventions';
 import { RedisService } from './services/redis';
 import TelegramService from './services/telegram';
-import { openAIChatModelConfig } from './services/openAIChatModelConfig';
 
 const redisService = new RedisService();
+
+async function deliverAssistantTelegramText(chatId: number, text: string): Promise<void> {
+  const placeholderMessageId = takeCatalogDelegationPlaceholderMessageId(chatId);
+  if (placeholderMessageId !== undefined) {
+    try {
+      await TelegramService.editChatMessageText(chatId, placeholderMessageId, text);
+    } catch {
+      try {
+        await TelegramService.deleteMessage(chatId, placeholderMessageId);
+      } catch {
+        // ignore
+      }
+      await TelegramService.sendMessage(chatId, text);
+    }
+  } else {
+    await TelegramService.sendMessage(chatId, text);
+  }
+}
 
 export async function handleMessage(chatId: number, text: string) {
   const requestContext = getTelegramRequestContext();
@@ -47,7 +68,7 @@ export async function handleMessage(chatId: number, text: string) {
           }
 
           const trimmedMessages = await trimMessages(state.messages, {
-            maxTokens: 4096,
+            maxTokens: 6000,
             strategy: 'last',
             tokenCounter: createOpenAITokenCounter(),
             startOn: 'human',
@@ -85,7 +106,7 @@ export async function handleMessage(chatId: number, text: string) {
                 if (result.catalogDelegation?.summary?.trim()) {
                   const responseText = result.catalogDelegation.summary.trim();
                   await redisService.saveAIMessage(chatId, responseText);
-                  await TelegramService.sendMessage(chatId, responseText);
+                  await deliverAssistantTelegramText(chatId, responseText);
 
                   return {
                     delivered: true,
@@ -114,7 +135,7 @@ export async function handleMessage(chatId: number, text: string) {
                 }
 
                 await redisService.saveAIMessage(chatId, aiResponse);
-                await TelegramService.sendMessage(chatId, aiResponse);
+                await deliverAssistantTelegramText(chatId, aiResponse);
 
                 return {
                   delivered: true,
@@ -136,11 +157,17 @@ export async function handleMessage(chatId: number, text: string) {
               }
             );
 
+            if (!finalResponse.delivered) {
+              await abandonCatalogDelegationPlaceholder(chatId);
+            }
+
             return {
               delivered: finalResponse.delivered,
               outputText: 'responseText' in finalResponse ? finalResponse.responseText : undefined,
             };
           }
+
+          await abandonCatalogDelegationPlaceholder(chatId);
 
           return {
             delivered: false,
@@ -168,6 +195,7 @@ export async function handleMessage(chatId: number, text: string) {
     );
   } catch (error: any) {
     console.error('Error processing message:', error);
+    await abandonCatalogDelegationPlaceholder(chatId);
     if (error.status === 429) {
       await TelegramService.sendMessage(chatId, 'Вы превысили лимит запросов. Попробуйте позже.');
       return;
@@ -186,25 +214,5 @@ export async function handleClearHistory(chatId: number, onlyMessages: boolean =
   } catch (error) {
     console.error('Error clearing chat history:', error);
     await TelegramService.sendMessage(chatId, 'Не удалось очистить ваши данные.');
-  }
-}
-
-export async function handleSetOpenAIModel(chatId: number, rawModelName?: string) {
-  const currentModelName = openAIChatModelConfig.getCurrentModelName();
-
-  if (!rawModelName?.trim()) {
-    await TelegramService.sendMessage(
-      chatId,
-      `Текущая OpenAI-модель: ${currentModelName}\nИспользование: /set_model <model>\nПоддерживаются форматы: gpt-5-mini и openai/gpt-5-mini`
-    );
-    return;
-  }
-
-  try {
-    const updatedModelName = openAIChatModelConfig.setCurrentModelName(rawModelName);
-    await TelegramService.sendMessage(chatId, `OpenAI-модель переключена на: ${updatedModelName}`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Не удалось изменить OpenAI-модель.';
-    await TelegramService.sendMessage(chatId, message);
   }
 }

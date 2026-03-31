@@ -12,7 +12,6 @@ Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and cloud AI m
 - WooCommerce catalog workers backed by in-app Woo REST SDK; tools defined in code with per-tool approval for mutating actions
 - Phoenix tracing for runtime inspection of assistant turns and agent orchestration
 - Conversation context management
-- Multiple Images input support
 - Message queuing system with BullMQ to prevent overlapping workflows
 - Redis for state persistence and job queuing
 - User authentication system with token-based access control
@@ -25,7 +24,7 @@ Okos is a Telegram AI Assistant built with TypeScript, LangGraph, and cloud AI m
 - Telegram Bot Token from [BotFather](https://t.me/botfather)
 - API keys for chosen AI providers
 - Redis server
-- **Important:** For chat models, you must use models with native tool-calling capabilities (e.g., GPT-4o, Gemini-2.0-flash)
+- **Important:** For chat models, you must use models with native tool-calling capabilities (e.g., GPT-4-class, Gemini with tools)
 
 ## Prebuilt Docker Image
 
@@ -147,20 +146,19 @@ Cloud deployment:
 - OpenAI:
   - `OPENAI_API_KEY`
   - `OPENAI_BASE_URL` (optional, example: `https://polza.ai/api/v1`) - For OpenAI-compatible providers
-  - `OPENAI_MODEL_NAME` (default: gpt-4o) - Must support native tool use
-  - `OPENAI_UTILITY_MODEL_NAME` (default: gpt-4o-mini) - For utility tasks
-  - `OPENAI_VISION_MODEL_NAME` (default: gpt-4o) - For vision tasks
+  - `OPENAI_MODEL_NAME` (required) - Must support native tool use; `.env.example` suggests `gpt-4o`
+  - `OPENAI_UTILITY_MODEL_NAME` (required) - For utility tasks; `.env.example` suggests `gpt-4o-mini`
 - Google:
   - `GOOGLE_API_KEY`
-  - `GOOGLE_MODEL_NAME` (default: gemini-2.0-flash) - Must support native tool use
-  - `GOOGLE_UTILITY_MODEL_NAME` (default: gemini-1.5-flash-8b) - For utility tasks
-  - `GOOGLE_VISION_MODEL_NAME` (default: gemini-2.0-flash) - For vision tasks
+  - `GOOGLE_MODEL_NAME` - Chat model; if unset, defaults to `gemini-1.5-pro` in code
+  - `GOOGLE_UTILITY_MODEL_NAME` - If unset, defaults to `gemini-1.5-flash` in code
 - Groq:
   - `GROQ_API_KEY`
-  - `GROQ_MODEL_NAME` (default: llama-3.3-70b-versatile) - Must support native tool use
-  - `GROQ_UTILITY_MODEL_NAME` (default: llama-3.1-8b-instant) - For utility tasks
-  - `GROQ_VISION_MODEL_NAME` (default: llama-3.2-90b-vision-preview) - For vision tasks
+  - `GROQ_MODEL_NAME` - Chat model; if unset, defaults to `gemma2-9b-it` in code
+  - `GROQ_UTILITY_MODEL_NAME` - If unset, defaults to `llama-3.1-8b-instant` in code
 ### Optional
+
+- `OPENAI_VISION_MODEL_NAME`, `GOOGLE_VISION_MODEL_NAME`, `GROQ_VISION_MODEL_NAME` — listed in `.env.example` only; **not read** by `src/config.ts`. Telegram photo messages are rejected.
 
 - `LANGCHAIN_TRACING_V2`: Enable LangSmith tracing
 - `LANGCHAIN_ENDPOINT`: LangSmith endpoint
@@ -180,7 +178,7 @@ Catalog work is handled by a dedicated orchestration layer:
 - workers are narrow specialists for categories, attributes, products, and variations
 - workers only see their own assigned tools (from `wooTools`); execution is via in-app Woo REST SDK
 
-Canonical playbooks live in code in `src/agents/catalog/playbooks.ts`.
+Canonical playbooks live in code under `src/agents/catalog/playbooks/` (entry `index.ts`).
 
 ## Runtime Tracing
 
@@ -188,7 +186,7 @@ Phoenix is the primary runtime tracing backend for `op-assistant`.
 
 - One Telegram user turn maps to root span `assistant.turn`
 - Main orchestration is traced through spans like `main_graph.invoke`, `main_graph.response_agent`, and `main_graph.catalog_agent_handoff`
-- Catalog planning and execution are traced through `catalog_agent.invoke` (inside `main_graph.catalog_agent_handoff`), `catalog_agent.planner_iteration`, `catalog_agent.run_execution_plan`, `catalog_agent.foreman_checkpoint`, `catalog_agent.worker_handoff`, `worker.tool_loop.agent`, and `worker.tool_call`
+- Catalog planning and execution are traced through `catalog_agent.invoke` (inside `main_graph.catalog_agent_handoff`), `catalog_agent.planner_iteration`, `catalog_agent.new_execution_plan`, `catalog_agent.approve_step`, `catalog_agent.finish_execution_plan`, `catalog_agent.worker_handoff`, `worker.tool_loop.agent`, and `worker.tool_call`
 - Woo tool execution is traced via `woocommerce_transport.call_tool` (span name kept for compatibility)
 
 Technical execution logs are no longer sent back to Telegram as `SYSTEM LOG`. For debugging orchestration, inspect Phoenix first.
@@ -211,7 +209,7 @@ The system implements one specialized queue:
 
 1. **Message Queue** - Handles incoming user messages and ensures sequential processing
 
-Detailed documentation about the queue system is available in the [Queue System Documentation](./docs/queue-system.md).
+Queue behavior is implemented in `src/services/messageQueue.ts` (BullMQ, sequential processing per chat).
 
 ## Available Tools
 
@@ -234,7 +232,7 @@ Okos includes a robust authentication system to control who can access and use t
    - Admin commands:
      - `/list_users` - View all authorized users
      - `/remove_user <username>` - Remove a user's access
-     - `/set_model <model>` - Override the runtime OpenAI chat model in memory until restart
+     - `/set_model` - Choose chat model preset (inline buttons); applies until process restart
 
 3. **Command Access**
    - Basic commands like `/clear_messages` and `/clear_all` are available to all users
@@ -245,23 +243,20 @@ This system ensures that only authorized users can interact with your bot while 
 
 ## Model Configuration
 
-Okos uses three different model configurations for specialized tasks:
+Okos uses two model tiers for chat and utility work:
 
 1. **Chat Model** - The primary model for user interactions
 
-   - **Must support native tool use** (e.g., GPT-4o, Gemini-1.5-flash)
+   - **Must support native tool use** (e.g., GPT-4o, Gemini with tools)
    - Handles the main conversation flow and tool invocation
-   - For the OpenAI provider, the default value comes from `OPENAI_MODEL_NAME`; it can be overridden at runtime with `/set_model <model>`
-   - `/set_model` accepts both `gpt-5-mini` and `openai/gpt-5-mini`; the stored runtime value is normalized to the bare model name
+   - For the OpenAI provider, the default comes from `OPENAI_MODEL_NAME`; the admin can override it at runtime with `/set_model` (inline presets, e.g. `gpt-5.3-chat` / `gpt-5.4-mini` / `gpt-5.4`)
 
 2. **Utility Model** - For internal utility tasks
 
    - Used for memory management and other lightweight internal tasks
    - Can be smaller/cheaper models as they don't require tool use
 
-3. **Vision Model** - For processing image inputs
-   - Used when users send photos
-   - Should have vision capabilities
+Telegram photo messages are not processed by the assistant (users get a short notice). Legacy `*_VISION_MODEL_NAME` entries in `.env.example` are unused by the current code.
 
 ## Archive Version
 

@@ -28,14 +28,30 @@ describe('workerResult', () => {
   it('renders the stable worker result text shape', () => {
     expect(
       renderWorkerResult({
-        status: 'blocked',
+        status: 'failed',
         data: [],
         missingData: ['product_id'],
         note: null,
       })
     ).toBe(
-      'Статус:\n- blocked\n\nДанные:\n- нет\n\nНедостающие данные:\n- product_id\n\nЗаметка:\n- нет'
+      'Статус:\n- failed\n\nДанные:\n- нет\n\nНедостающие данные:\n- product_id\n\nЗаметка:\n- нет'
     );
+  });
+
+  it('coerces legacy status=blocked payloads to failed when normalizing', () => {
+    expect(
+      normalizeWorkerResult({
+        status: 'blocked',
+        data: [],
+        missingData: ['sku'],
+        note: null,
+      })
+    ).toEqual({
+      status: 'failed',
+      data: [],
+      missingData: ['sku'],
+      note: null,
+    });
   });
 
   it('includes summary in renderWorkerResult when present', () => {
@@ -95,7 +111,7 @@ describe('workerResult', () => {
 
   it('workerResultToEnvelope uses summary when set, else note', () => {
     const withSummary = workerResultToEnvelope({
-      status: 'blocked',
+      status: 'failed',
       data: [],
       missingData: ['product_id'],
       note: 'old note',
@@ -124,12 +140,12 @@ describe('workerResult', () => {
 
   it('renderWorkerResultEnvelopeSummary falls back to counts and first fact when no summary', () => {
     const out = renderWorkerResultEnvelopeSummary({
-      status: 'blocked',
+      status: 'failed',
       facts: ['first fact here'],
       missingInputs: ['x'],
       summary: null,
     });
-    expect(out).toContain('Статус: blocked');
+    expect(out).toContain('Статус: failed');
     expect(out).toContain('Фактов: 1');
     expect(out).toContain('Недостающие: 1');
     expect(out).toContain('first fact here');

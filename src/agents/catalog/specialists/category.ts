@@ -1,10 +1,12 @@
 import { chatModel } from '../../../config';
 import { PROMPTS } from '../../../prompts';
+import { CATALOG_WORKER_KNOWLEDGE } from '../catalogWorkerKnowledge';
 import { WORKER_RESULT_TOOL_NAME, createWorkerResultTool } from '../contracts/workerResult';
 import { createToolLoopGraph } from '../../shared/toolLoopGraph';
 import { categoryWorkerWooTools } from './shared/wooTools/categoryTools';
-import { createCatalogWorkerHandoffTool } from './shared/handoffTool';
 import { type CatalogWorkerDefinition } from './shared/workerDefinition';
+
+const k = CATALOG_WORKER_KNOWLEDGE['category-worker'];
 
 const categoryWorkerTools = [...categoryWorkerWooTools, createWorkerResultTool()];
 
@@ -23,10 +25,6 @@ export const categoryWorkerGraph = buildCategoryWorkerGraph().compile({
 });
 
 export const categoryWorkerDefinition: CatalogWorkerDefinition = {
-  name: 'run_category_worker',
-  handoffTool: createCatalogWorkerHandoffTool(
-    'run_category_worker',
-    'Делегируй задачи только по категориям: найти категорию по имени, slug или ID; получить список, прочитать, создать, обновить или удалить категорию; подобрать или создать нужную категорию; управлять связями родитель-ребёнок. Не используй для поиска товаров внутри категории, редактирования товаров, атрибутов или вариаций.'
-  ),
+  id: k.id,
   graph: categoryWorkerGraph,
 };

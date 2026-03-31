@@ -1,10 +1,12 @@
 import { chatModel } from '../../../config';
 import { PROMPTS } from '../../../prompts';
+import { CATALOG_WORKER_KNOWLEDGE } from '../catalogWorkerKnowledge';
 import { WORKER_RESULT_TOOL_NAME, createWorkerResultTool } from '../contracts/workerResult';
 import { createToolLoopGraph } from '../../shared/toolLoopGraph';
 import { variationWorkerWooTools } from './shared/wooTools/variationTools';
-import { createCatalogWorkerHandoffTool } from './shared/handoffTool';
 import { type CatalogWorkerDefinition } from './shared/workerDefinition';
+
+const k = CATALOG_WORKER_KNOWLEDGE['variation-worker'];
 
 const variationWorkerTools = [...variationWorkerWooTools, createWorkerResultTool()];
 
@@ -23,10 +25,6 @@ export const variationWorkerGraph = buildVariationWorkerGraph().compile({
 });
 
 export const variationWorkerDefinition: CatalogWorkerDefinition = {
-  name: 'run_variation_worker',
-  handoffTool: createCatalogWorkerHandoffTool(
-    'run_variation_worker',
-    'Делегируй задачи по дочерним вариациям существующего вариативного товара: получить список, прочитать, создать, обновить или удалить вариации; пакетно изменить много вариаций; или сгенерировать все вариации по атрибутам родительского товара. Для задач в режиме execute родительский товар уже должен быть определён. Не используй для полей родительского товара или глобальных атрибутов и термов.'
-  ),
+  id: k.id,
   graph: variationWorkerGraph,
 };

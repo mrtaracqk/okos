@@ -3,9 +3,10 @@ import { html } from '@elysiajs/html';
 import { Elysia } from 'elysia';
 import TelegramBot from 'node-telegram-bot-api';
 import { runWithTelegramRequestContext, type TelegramRequestContext } from './plugins/approval';
-import { handleClearHistory, handleMessage, handleSetOpenAIModel } from './handlers';
+import { handleClearHistory, handleMessage } from './handlers';
 import MessageQueueService, { MessagePayload } from './services/messageQueue';
 import { RedisService } from './services/redis';
+import { handleSetModelCallback, sendSetModelWizard } from './services/setModelTelegram';
 import TelegramService from './services/telegram';
 import { handleTelegramApprovalCallback } from './services/toolApproval';
 
@@ -146,7 +147,7 @@ bot
     { command: 'clear_all', description: 'Очистить историю чата' },
     { command: 'list_users', description: 'Показать авторизованных пользователей' },
     { command: 'remove_user', description: 'Удалить пользователя из авторизованных' },
-    { command: 'set_model', description: 'Сменить OpenAI-модель' },
+    { command: 'set_model', description: 'Модель чата (кнопки)' },
   ])
   .catch((error) => {
     console.error('Error setting commands:', error);
@@ -212,7 +213,7 @@ bot.on('text', async (msg) => {
       return;
     }
 
-    await handleSetOpenAIModel(chatId, command.args);
+    await sendSetModelWizard(chatId);
     return;
   }
 
@@ -287,8 +288,13 @@ bot.on('sticker', async (msg) => {
 
 bot.on('callback_query', async (callbackQuery) => {
   try {
-    const handled = await handleTelegramApprovalCallback(callbackQuery);
-    if (!handled) {
+    const approvalHandled = await handleTelegramApprovalCallback(callbackQuery);
+    if (approvalHandled) {
+      return;
+    }
+
+    const setModelHandled = await handleSetModelCallback(callbackQuery, OKOS_ADMIN_USERNAME);
+    if (!setModelHandled) {
       await TelegramService.answerCallbackQuery(callbackQuery.id);
     }
   } catch (error) {

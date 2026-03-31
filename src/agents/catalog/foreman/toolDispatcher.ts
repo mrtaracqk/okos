@@ -9,18 +9,12 @@ import {
   runToolSpan,
 } from '../../../observability/traceContext';
 import {
-  EXECUTION_PLAN_REQUIRED_MESSAGE,
   getPlanningRuntime,
   getPlanningRunContext,
+  type RuntimePlan,
   type RuntimePlanTask,
-  manageExecutionPlanInputSchema,
-  manageExecutionPlanTool,
 } from '../../../runtime/planning';
-import {
-  buildWorkerInputFromEnvelope,
-  parseHandoffArgsToEnvelope,
-  type WorkerTaskEnvelope,
-} from '../contracts/workerRequest';
+import { buildWorkerInputFromEnvelope, type WorkerTaskEnvelope } from '../contracts/workerRequest';
 import {
   countDomainToolRuns,
   extractWorkerResult,
@@ -32,10 +26,12 @@ import { type WorkerRun } from '../contracts/workerRun';
 import { getCatalogAgentRuntimeRunId } from './planning';
 import { inspectCatalogPlaybookTool } from './playbookInspection';
 import {
-  foremanCheckpointInputSchema,
-  runExecutionPlanInputSchema,
-  runExecutionPlanTool,
-  foremanCheckpointTool,
+  approveStepInputSchema,
+  approveStepTool,
+  finishExecutionPlanInputSchema,
+  finishExecutionPlanTool,
+  newExecutionPlanInputSchema,
+  newExecutionPlanTool,
 } from './executionTools';
 import {
   buildNoToolCallFailure,
@@ -43,7 +39,9 @@ import {
   getLastNonReportFailure,
   resolveWorkerRunStatus,
 } from './workerRunState';
+import { resolveCatalogWorkerId } from '../contracts/catalogWorkerId';
 import { catalogForemanRegistry } from './workerRegistry';
+import { buildPlannerSubtaskNarrative } from './plannerNarrative';
 
 /** Id OpenAI tool call for this planner turn (the model sets `id`; `name` is a last-resort fallback). */
 function openAiToolCallId(toolCall: { id?: string; name?: string }): string {
@@ -79,16 +77,19 @@ function formatEnvelopeFacts(envelope: WorkerTaskEnvelope): string | undefined {
   return envelope.facts.join('\n');
 }
 
-const workerToolByPlanOwner: Record<string, string> = {
-  'category-worker': 'run_category_worker',
-  'attribute-worker': 'run_attribute_worker',
-  'product-worker': 'run_product_worker',
-  'variation-worker': 'run_variation_worker',
-};
+function planExecutionToWorkerEnvelope(execution: NonNullable<RuntimePlanTask['execution']>): WorkerTaskEnvelope {
+  return {
+    objective: execution.objective,
+    facts: execution.facts,
+    constraints: execution.constraints,
+    expectedOutput: execution.expectedOutput,
+    contextNotes: execution.contextNotes,
+  };
+}
 
-function mapWorkerRunStatusToPlanStatus(status: WorkerRun['status']): 'completed' | 'blocked' | 'failed' {
-  if (status === 'invalid') return 'failed';
-  return status;
+function mapWorkerRunStatusToPlanStatus(status: WorkerRun['status']): 'completed' | 'failed' {
+  if (status === 'completed') return 'completed';
+  return 'failed';
 }
 
 export type CatalogToolCompletion = {
@@ -96,33 +97,30 @@ export type CatalogToolCompletion = {
   finalizeOutcome: 'completed' | 'failed';
 };
 
-type ExecuteWorkerHandoffOptions = {
-  /**
-   * Planner tool this ToolMessage must answer (`run_execution_plan` / `foreman_checkpoint`), when
-   * `toolCall` is a synthetic object built only to run the worker graph (same id as the planner call).
-   */
-  catalogToolReply?: { tool_call_id: string; name: string };
+/** LangGraph tool_result pairing: which AIMessage tool_call this worker outcome answers. */
+type WorkerHandoffToolReply = {
+  tool_call_id: string;
+  name: string;
 };
 
 async function executeWorkerHandoff(
-  toolCall: any,
+  requestEnvelope: WorkerTaskEnvelope,
   workerRuns: WorkerRun[],
   worker: NonNullable<ReturnType<typeof catalogForemanRegistry.resolveWorker>>,
-  options: ExecuteWorkerHandoffOptions = {}
+  replyToToolCall: WorkerHandoffToolReply
 ): Promise<{ run: WorkerRun; toolMessage: ToolMessage }> {
-  const workerName = worker.name;
-  const requestEnvelope = parseHandoffArgsToEnvelope(toolCall.args ?? {});
+  const workerId = worker.id;
   const { objective, expectedOutput } = requestEnvelope;
-  const replyToolCallId = options.catalogToolReply?.tool_call_id ?? openAiToolCallId(toolCall);
-  const replyToolName = options.catalogToolReply?.name ?? toolCall.name;
+  const replyToolCallId = replyToToolCall.tool_call_id;
+  const replyToolName = replyToToolCall.name;
 
   return runAgentSpan(
     'catalog_agent.worker_handoff',
     async () => {
       addTraceEvent('agent.handoff', {
         from_agent: 'catalog_agent.planner',
-        to_agent: `worker.${workerName}`,
-        'tool.name': toolCall.name,
+        to_agent: `worker.${workerId}`,
+        'catalog.worker_id': workerId,
         status: 'requested',
       });
       const missingFields = [
@@ -132,16 +130,16 @@ async function executeWorkerHandoff(
 
       if (missingFields.length > 0) {
         const run: WorkerRun = {
-          agent: workerName,
+          agent: workerId,
           status: 'invalid',
           task: '',
           details: `Отсутствуют обязательные аргументы handoff: ${missingFields.join(', ')}.`,
           request: requestEnvelope,
         };
         addTraceEvent('worker.result_reported', {
-          from_agent: `worker.${workerName}`,
+          from_agent: `worker.${workerId}`,
           to_agent: 'catalog_agent.planner',
-          'catalog.worker_name': workerName,
+          'catalog.worker_name': workerId,
           status: run.status,
         });
 
@@ -157,7 +155,7 @@ async function executeWorkerHandoff(
 
       try {
         const result = await runAgentSpan(
-          `worker.${workerName}`,
+          `worker.${workerId}`,
           async () =>
             worker.graph.invoke(
               {
@@ -168,7 +166,7 @@ async function executeWorkerHandoff(
             ),
           {
             attributes: buildTraceAttributes({
-              'catalog.worker_name': workerName,
+              'catalog.worker_name': workerId,
               'catalog.task': formatTraceValue(objective, 800),
               'catalog.execution_data': formatEnvelopeFacts(requestEnvelope)
                 ? formatTraceText(formatEnvelopeFacts(requestEnvelope)!, 1000)
@@ -185,8 +183,9 @@ async function executeWorkerHandoff(
           result.finalResult != null ? result.finalResult : (workerResult ? workerResultToEnvelope(workerResult) : undefined);
         const domainToolRunCount = countDomainToolRuns(rawWorkerToolRuns);
         const synthesizedFailure =
-          domainToolRunCount === 0 && runResult?.status !== 'blocked'
-            ? buildNoToolCallFailure(workerName, objective)
+          domainToolRunCount === 0 &&
+          (!runResult || runResult.status === 'completed')
+            ? buildNoToolCallFailure(workerId, objective)
             : undefined;
         const workerToolRuns = synthesizedFailure ? [...rawWorkerToolRuns, synthesizedFailure] : rawWorkerToolRuns;
         const workerFailure = getLastNonReportFailure(workerToolRuns);
@@ -202,13 +201,13 @@ async function executeWorkerHandoff(
             ? renderWorkerResult(workerResult)
             : runResult != null
               ? renderWorkerResultEnvelopeSummary(runResult)
-              : buildMissingWorkerResultNotice(workerName);
+              : buildMissingWorkerResultNotice(workerId);
         const details =
           runStatusFinal === 'failed' && workerFailure
             ? `${detailsForTrace}\n\n${formatWorkerFailure(workerFailure)}`
             : detailsForTrace;
         const run: WorkerRun = {
-          agent: workerName,
+          agent: workerId,
           status: runStatusFinal,
           task: objective,
           details,
@@ -219,11 +218,11 @@ async function executeWorkerHandoff(
         const toolMessageContent =
           run.result !== undefined
             ? renderWorkerResultEnvelopeSummary(run.result)
-            : buildMissingWorkerResultNotice(workerName);
+            : buildMissingWorkerResultNotice(workerId);
         addTraceEvent('worker.result_reported', {
-          from_agent: `worker.${workerName}`,
+          from_agent: `worker.${workerId}`,
           to_agent: 'catalog_agent.planner',
-          'catalog.worker_name': workerName,
+          'catalog.worker_name': workerId,
           'catalog.tool_runs': workerToolRuns.length,
           status: run.status,
         });
@@ -239,16 +238,16 @@ async function executeWorkerHandoff(
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Неизвестная ошибка выполнения воркера.';
         const run: WorkerRun = {
-          agent: workerName,
+          agent: workerId,
           status: 'failed',
           task: objective,
           details: message,
           request: requestEnvelope,
         };
         addTraceEvent('worker.result_reported', {
-          from_agent: `worker.${workerName}`,
+          from_agent: `worker.${workerId}`,
           to_agent: 'catalog_agent.planner',
-          'catalog.worker_name': workerName,
+          'catalog.worker_name': workerId,
           status: run.status,
         });
 
@@ -257,14 +256,14 @@ async function executeWorkerHandoff(
           toolMessage: new ToolMessage({
             tool_call_id: replyToolCallId,
             name: replyToolName,
-            content: `Воркер "${toolCall.name}" завершился с ошибкой: ${message}`,
+            content: `Воркер "${workerId}" завершился с ошибкой: ${message}`,
           }),
         };
       }
     },
     {
       attributes: buildTraceAttributes({
-        'catalog.worker_name': workerName,
+        'catalog.worker_name': workerId,
         'catalog.previous_worker_runs': workerRuns.length,
         'catalog.task': formatTraceValue(objective || '(empty)', 800),
         'catalog.execution_data': formatEnvelopeFacts(requestEnvelope)
@@ -286,46 +285,121 @@ async function executeWorkerHandoff(
   );
 }
 
+type PlannerExecutionToolPhase = 'new_execution_plan' | 'approve_step';
+
+function messagesForInProgressExecutionFailure(phase: PlannerExecutionToolPhase): {
+  noExecutableInProgressTask: string;
+  planNotReloadedAfterWorker: string;
+} {
+  if (phase === 'new_execution_plan') {
+    return {
+      noExecutableInProgressTask: 'Нет task в статусе in_progress для исполнения.',
+      planNotReloadedAfterWorker:
+        'План зафиксирован, подзадача отработана, но активный план не прочитан из runtime после обновления.',
+    };
+  }
+  return {
+    noExecutableInProgressTask: 'Не удалось найти execution-данные для in_progress task.',
+    planNotReloadedAfterWorker:
+      'approve_step применён, подзадача отработана, но активный план не прочитан из runtime после обновления.',
+  };
+}
+
+/**
+ * Исполняет единственную задачу плана в статусе in_progress (handoff воркеру) и записывает итоговый статус задачи в runtime.
+ * Общий путь для new_execution_plan (после create/update) и approve_step (после перевода следующей pending → in_progress).
+ */
+async function runInProgressPlanTaskAndSyncRuntime(params: {
+  runId: string;
+  workerRuns: WorkerRun[];
+  replyToToolCall: WorkerHandoffToolReply;
+  phase: PlannerExecutionToolPhase;
+}): Promise<
+  | { ok: true; run: WorkerRun; planAfterWorker: RuntimePlan; completedTaskId: string }
+  | { ok: false; toolMessage: ToolMessage; run?: WorkerRun }
+> {
+  const { runId, workerRuns, replyToToolCall, phase } = params;
+  const msgs = messagesForInProgressExecutionFailure(phase);
+  const planningRuntime = getPlanningRuntime();
+  const replyToolCallId = replyToToolCall.tool_call_id;
+  const replyToolName = replyToToolCall.name;
+
+  const activePlan = planningRuntime.getActivePlan(runId);
+  const activeTask = activePlan?.tasks.find((task) => task.status === 'in_progress');
+  if (!activeTask || !activeTask.execution) {
+    return {
+      ok: false,
+      toolMessage: new ToolMessage({
+        tool_call_id: replyToolCallId,
+        name: replyToolName,
+        content: msgs.noExecutableInProgressTask,
+      }),
+    };
+  }
+
+  const workerId = resolveCatalogWorkerId(activeTask.owner);
+  if (!workerId) {
+    return {
+      ok: false,
+      toolMessage: new ToolMessage({
+        tool_call_id: replyToolCallId,
+        name: replyToolName,
+        content: `Невозможно исполнить taskId="${activeTask.taskId}": неподдерживаемый owner="${activeTask.owner}".`,
+      }),
+    };
+  }
+
+  const workerDef = catalogForemanRegistry.resolveWorker(workerId);
+  if (!workerDef) {
+    return {
+      ok: false,
+      toolMessage: new ToolMessage({
+        tool_call_id: replyToolCallId,
+        name: replyToolName,
+        content: `Не найден worker для id="${workerId}".`,
+      }),
+    };
+  }
+
+  const workerEnvelope = planExecutionToWorkerEnvelope(activeTask.execution);
+  const { run } = await executeWorkerHandoff(workerEnvelope, workerRuns, workerDef, {
+    tool_call_id: replyToolCallId,
+    name: replyToolName,
+  });
+
+  const nextPlanTasks: RuntimePlanTask[] = (activePlan?.tasks ?? []).map((task) => {
+    if (task.taskId !== activeTask.taskId) return task;
+    return { ...task, status: mapWorkerRunStatusToPlanStatus(run.status) };
+  });
+
+  await planningRuntime.updatePlan({ runId, tasks: nextPlanTasks });
+
+  const planAfterWorker = planningRuntime.getActivePlan(runId);
+  if (!planAfterWorker) {
+    return {
+      ok: false,
+      run,
+      toolMessage: new ToolMessage({
+        tool_call_id: replyToolCallId,
+        name: replyToolName,
+        content: msgs.planNotReloadedAfterWorker,
+      }),
+    };
+  }
+
+  return { ok: true, run, planAfterWorker, completedTaskId: activeTask.taskId };
+}
+
 export async function executeCatalogToolCall(
   toolCall: any,
   workerRuns: WorkerRun[]
-): Promise<{ run?: WorkerRun; toolMessage: ToolMessage; completion?: CatalogToolCompletion }> {
+): Promise<{
+  run?: WorkerRun;
+  toolMessage: ToolMessage;
+  completion?: CatalogToolCompletion;
+  plannerFollowUpMessages?: HumanMessage[];
+}> {
   const plannerToolCallId = openAiToolCallId(toolCall);
-
-  // Stage 1 contract (replan determinism):
-  // after `foreman_checkpoint(action=replan)`, the runtime must wait for the
-  // next executable snapshot to be provided via `run_execution_plan`.
-  const runId = getCatalogAgentRuntimeRunId();
-  const activePlan = runId ? getPlanningRuntime().getActivePlan(runId) : null;
-  if (activePlan?.replanAwaitingSnapshot) {
-    if (toolCall.name !== runExecutionPlanTool.name) {
-      return {
-        toolMessage: new ToolMessage({
-          tool_call_id: plannerToolCallId,
-          name: toolCall.name,
-          content:
-            'План обнулен после replan. Сначала пересобери executable snapshot вызовом `run_execution_plan(tasks=[...])`, затем повтори checkpoint.',
-        }),
-      };
-    }
-  }
-
-  const worker = catalogForemanRegistry.resolveWorker(toolCall.name);
-  if (worker) {
-    const runId = getCatalogAgentRuntimeRunId();
-    if (runId && !getPlanningRuntime().getActivePlan(runId)) {
-      return {
-        toolMessage: new ToolMessage({
-          tool_call_id: plannerToolCallId,
-          name: toolCall.name,
-          content: EXECUTION_PLAN_REQUIRED_MESSAGE,
-        }),
-      };
-    }
-
-    const { run, toolMessage } = await executeWorkerHandoff(toolCall, workerRuns, worker);
-    return { run, toolMessage };
-  }
 
   if (toolCall.name === inspectCatalogPlaybookTool.name) {
     const playbookId = typeof toolCall.args?.playbookId === 'string' ? toolCall.args.playbookId.trim() : '';
@@ -366,61 +440,18 @@ export async function executeCatalogToolCall(
     );
   }
 
-  if (toolCall.name === manageExecutionPlanTool.name) {
-    const parsedArgs = manageExecutionPlanInputSchema.safeParse(toolCall.args ?? {});
+  if (toolCall.name === newExecutionPlanTool.name) {
+    const parsedArgs = newExecutionPlanInputSchema.safeParse(toolCall.args ?? {});
 
     return runToolSpan(
-      'catalog_agent.manage_execution_plan',
+      'catalog_agent.new_execution_plan',
       async () => {
         if (!parsedArgs.success) {
           return {
             toolMessage: new ToolMessage({
               tool_call_id: plannerToolCallId,
               name: toolCall.name,
-              content: `Сбой planning tool: ${parsedArgs.error.issues[0]?.message ?? 'некорректные аргументы.'}`,
-            }),
-          };
-        }
-
-        const content = await manageExecutionPlanTool.invoke(parsedArgs.data);
-
-        return {
-          toolMessage: new ToolMessage({
-            tool_call_id: plannerToolCallId,
-            name: toolCall.name,
-            content: typeof content === 'string' ? content : JSON.stringify(content),
-          }),
-        };
-      },
-      {
-        attributes: buildTraceAttributes({
-          'catalog.planning_action': parsedArgs.success ? parsedArgs.data.action : '(invalid)',
-        }),
-        mapResultAttributes: ({ toolMessage }) =>
-          buildTraceAttributes({
-            'output.value': formatTraceText(getToolMessageText(toolMessage), 1000),
-          }),
-        statusMessage: ({ toolMessage }) =>
-          getToolMessageText(toolMessage).includes('Ошибка планирования:') ||
-          getToolMessageText(toolMessage).includes('Сбой planning tool:')
-            ? getToolMessageText(toolMessage)
-            : undefined,
-      }
-    );
-  }
-
-  if (toolCall.name === runExecutionPlanTool.name) {
-    const parsedArgs = runExecutionPlanInputSchema.safeParse(toolCall.args ?? {});
-
-    return runToolSpan(
-      'catalog_agent.run_execution_plan',
-      async () => {
-        if (!parsedArgs.success) {
-          return {
-            toolMessage: new ToolMessage({
-              tool_call_id: plannerToolCallId,
-              name: toolCall.name,
-              content: `Сбой run_execution_plan: ${parsedArgs.error.issues[0]?.message ?? 'некорректные аргументы.'}`,
+              content: `Сбой new_execution_plan: ${parsedArgs.error.issues[0]?.message ?? 'некорректные аргументы.'}`,
             }),
           };
         }
@@ -468,76 +499,38 @@ export async function executeCatalogToolCall(
             });
           }
 
-          // After we received a fresh executable snapshot (or replaced it),
-          // the replan gate must be cleared.
-          await planningRuntime.setReplanAwaitingSnapshot(runId, false);
-
-          // Execute the single currently-in_progress task and stop for checkpoint.
-          const activePlan = planningRuntime.getActivePlan(runId);
-          const activeTask = activePlan?.tasks.find((task) => task.status === 'in_progress');
-          if (!activeTask || !activeTask.execution) {
-            return {
-              toolMessage: new ToolMessage({
-                tool_call_id: plannerToolCallId,
-                name: toolCall.name,
-                content: 'Нет task в статусе in_progress для исполнения.',
-              }),
-            };
+          const exec = await runInProgressPlanTaskAndSyncRuntime({
+            runId,
+            workerRuns,
+            replyToToolCall: { tool_call_id: plannerToolCallId, name: toolCall.name },
+            phase: 'new_execution_plan',
+          });
+          if (!exec.ok) {
+            return exec.run ? { run: exec.run, toolMessage: exec.toolMessage } : { toolMessage: exec.toolMessage };
           }
 
-          const workerToolName = workerToolByPlanOwner[activeTask.owner];
-          if (!workerToolName) {
-            return {
-              toolMessage: new ToolMessage({
-                tool_call_id: plannerToolCallId,
-                name: toolCall.name,
-                content: `Невозможно исполнить taskId="${activeTask.taskId}": неподдерживаемый owner="${activeTask.owner}".`,
-              }),
-            };
-          }
+          const { run, planAfterWorker, completedTaskId } = exec;
+          const narrative = buildPlannerSubtaskNarrative({
+            phase: 'new_execution_plan',
+            plan: planAfterWorker,
+            completedTaskId,
+            run,
+          });
 
-          const workerDef = catalogForemanRegistry.resolveWorker(workerToolName);
-          if (!workerDef) {
-            return {
-              toolMessage: new ToolMessage({
-                tool_call_id: plannerToolCallId,
-                name: toolCall.name,
-                content: `Не найден worker для tool="${workerToolName}".`,
-              }),
-            };
-          }
-
-          const fakeToolCall = {
-            id: plannerToolCallId,
-            name: workerToolName,
-            args: {
-              objective: activeTask.execution.objective,
-              facts: activeTask.execution.facts.length > 0 ? activeTask.execution.facts.join('\n') : undefined,
-              constraints:
-                activeTask.execution.constraints.length > 0 ? activeTask.execution.constraints.join('\n') : undefined,
-              expectedOutput: activeTask.execution.expectedOutput,
-              contextNotes: activeTask.execution.contextNotes,
-            },
+          return {
+            run,
+            toolMessage: new ToolMessage({
+              tool_call_id: plannerToolCallId,
+              name: toolCall.name,
+              content: 'План создан и запущен в работу.',}),
+            plannerFollowUpMessages: [new HumanMessage(narrative)],
           };
-
-          const { run, toolMessage } = await executeWorkerHandoff(fakeToolCall, workerRuns, workerDef, {
-            catalogToolReply: { tool_call_id: plannerToolCallId, name: toolCall.name },
-          });
-
-          const nextPlanTasks: RuntimePlanTask[] = (activePlan?.tasks ?? []).map((task) => {
-            if (task.taskId !== activeTask.taskId) return task;
-            return { ...task, status: mapWorkerRunStatusToPlanStatus(run.status) };
-          });
-
-          await planningRuntime.updatePlan({ runId, tasks: nextPlanTasks });
-
-          return { run, toolMessage };
         } catch (error) {
           return {
             toolMessage: new ToolMessage({
               tool_call_id: plannerToolCallId,
               name: toolCall.name,
-              content: error instanceof Error ? error.message : 'Ошибка run_execution_plan.',
+              content: error instanceof Error ? error.message : 'Ошибка new_execution_plan.',
             }),
           };
         }
@@ -556,8 +549,8 @@ export async function executeCatalogToolCall(
         statusMessage: ({ toolMessage }) => {
           const t = getToolMessageText(toolMessage);
           if (
-            t.startsWith('Сбой run_execution_plan:') ||
-            t.includes('Ошибка run_execution_plan.') ||
+            t.startsWith('Сбой new_execution_plan:') ||
+            t.includes('Ошибка new_execution_plan.') ||
             t.includes('Runtime планирования недоступен')
           ) {
             return t;
@@ -568,19 +561,19 @@ export async function executeCatalogToolCall(
     );
   }
 
-  if (toolCall.name === foremanCheckpointTool.name) {
-    const parsedArgs = foremanCheckpointInputSchema.safeParse(toolCall.args ?? {});
-    const foremanAction = parsedArgs.success ? parsedArgs.data.action : '(invalid)';
+  if (toolCall.name === finishExecutionPlanTool.name) {
+    const parsedArgs = finishExecutionPlanInputSchema.safeParse(toolCall.args ?? {});
+    const finishOutcome = parsedArgs.success ? parsedArgs.data.outcome : '(invalid)';
 
     return runToolSpan(
-      'catalog_agent.foreman_checkpoint',
+      'catalog_agent.finish_execution_plan',
       async () => {
         if (!parsedArgs.success) {
           return {
             toolMessage: new ToolMessage({
               tool_call_id: plannerToolCallId,
               name: toolCall.name,
-              content: `Сбой foreman_checkpoint: ${parsedArgs.error.issues[0]?.message ?? 'некорректные аргументы.'}`,
+              content: `Сбой finish_execution_plan: ${parsedArgs.error.issues[0]?.message ?? 'некорректные аргументы.'}`,
             }),
           };
         }
@@ -599,34 +592,10 @@ export async function executeCatalogToolCall(
           };
         }
 
-        const action = parsedArgs.data.action;
-        const completionSummary = parsedArgs.data.result?.summary?.trim();
-        const activePlan = planningRuntime.getActivePlan(runId);
-
-        if (!activePlan) {
-          return {
-            toolMessage: new ToolMessage({
-              tool_call_id: plannerToolCallId,
-              name: toolCall.name,
-              content: 'Активного плана нет для checkpoint.',
-            }),
-          };
-        }
+        const summary = parsedArgs.data.summary.trim();
 
         try {
-          if (action === 'replan') {
-            await planningRuntime.setReplanAwaitingSnapshot(runId, true);
-            return {
-              toolMessage: new ToolMessage({
-                tool_call_id: plannerToolCallId,
-                name: toolCall.name,
-                content:
-                  'План обнулен после replan. Вызови тул планирования `run_execution_plan(tasks=[...])` для пересборки executable snapshot.',
-              }),
-            };
-          }
-
-          if (action === 'complete') {
+          if (parsedArgs.data.outcome === 'completed') {
             const plan = await planningRuntime.completePlan(runId);
             return {
               toolMessage: new ToolMessage({
@@ -635,183 +604,151 @@ export async function executeCatalogToolCall(
                 content: `План завершён со статусом "${plan.status}". Финальный ответ зафиксирован.`,
               }),
               completion: {
-                summary: completionSummary!,
+                summary,
                 finalizeOutcome: 'completed',
               },
             };
           }
 
-          if (action === 'fail') {
-            const plan = await planningRuntime.failPlan(runId);
-            return {
-              toolMessage: new ToolMessage({
-                tool_call_id: plannerToolCallId,
-                name: toolCall.name,
-                content: `План переведён в статус "${plan.status}". Финальный ответ зафиксирован.`,
-              }),
-              completion: {
-                summary: completionSummary!,
-                finalizeOutcome: 'failed',
-              },
-            };
-          }
-
-          if (action === 'approve') {
-            if (activePlan.replanAwaitingSnapshot) {
-              return {
-                toolMessage: new ToolMessage({
-                  tool_call_id: plannerToolCallId,
-                  name: toolCall.name,
-                  content:
-                    'Нельзя выполнить approve: после `replan` план обнулен и ожидает новый executable snapshot. ' +
-                    'Вызови `run_execution_plan(tasks=[...])`, затем повтори checkpoint.',
-                }),
-              };
-            }
-
-            const nextTask = activePlan.tasks.find((t) => t.status === 'pending');
-            if (!nextTask) {
-              // Stage 1 contract: plan must be closed explicitly via approve gate
-              // only moves execution forward; closure happens via complete/fail.
-              const hasFailureLike = activePlan.tasks.some((t) => t.status === 'failed' || t.status === 'blocked');
-              const suggestedAction: 'complete' | 'fail' = hasFailureLike ? 'fail' : 'complete';
-              return {
-                toolMessage: new ToolMessage({
-                  tool_call_id: plannerToolCallId,
-                  name: toolCall.name,
-                  content: `Нет pending задач. Для закрытия плана вызови foreman_checkpoint(action=${suggestedAction}).`,
-                }),
-              };
-            }
-
-            // Stage 1 contract: `approve` can only advance after the last executed worker task
-            // completed successfully. If it ended as `blocked/failed`, model must use `replan/fail`.
-            const nextTaskIndex = activePlan.tasks.findIndex((t) => t.taskId === nextTask.taskId);
-            const previousTask = nextTaskIndex > 0 ? activePlan.tasks[nextTaskIndex - 1] : null;
-            if (!previousTask) {
-              return {
-                toolMessage: new ToolMessage({
-                  tool_call_id: plannerToolCallId,
-                  name: toolCall.name,
-                  content:
-                    'План ещё не стартовал: нельзя исполнять подзадачу через approve до вызова run_execution_plan. ' +
-                    'Для старта вызови run_execution_plan(tasks=[...]).',
-                }),
-              };
-            }
-
-            if (previousTask.status !== 'completed') {
-              const suggestedAction: 'replan' | 'fail' = previousTask.status === 'blocked' ? 'replan' : 'fail';
-              return {
-                toolMessage: new ToolMessage({
-                  tool_call_id: plannerToolCallId,
-                  name: toolCall.name,
-                  content: `Последняя подзадача "${previousTask.taskId}" завершилась со статусом "${previousTask.status}". ` +
-                    `Нельзя продвигать план через approve. Для продолжения вызови foreman_checkpoint(action=${suggestedAction}).`,
-                }),
-              };
-            }
-
-            const tasksWithNextInProgress: RuntimePlanTask[] = activePlan.tasks.map((t) =>
-              t.taskId === nextTask.taskId ? { ...t, status: 'in_progress' as const } : t
-            );
-
-            await planningRuntime.updatePlan({ runId, tasks: tasksWithNextInProgress });
-
-            const planAfterSwitch = planningRuntime.getActivePlan(runId);
-            const activeTaskAfterSwitch = planAfterSwitch?.tasks.find((t) => t.status === 'in_progress');
-            if (!activeTaskAfterSwitch?.execution) {
-              return {
-                toolMessage: new ToolMessage({
-                  tool_call_id: plannerToolCallId,
-                  name: toolCall.name,
-                  content: 'Не удалось найти execution-данные для in_progress task.',
-                }),
-              };
-            }
-
-            const workerToolName = workerToolByPlanOwner[activeTaskAfterSwitch.owner];
-            if (!workerToolName) {
-              return {
-                toolMessage: new ToolMessage({
-                  tool_call_id: plannerToolCallId,
-                  name: toolCall.name,
-                  content: `Невозможно исполнить taskId="${activeTaskAfterSwitch.taskId}": неподдерживаемый owner="${activeTaskAfterSwitch.owner}".`,
-                }),
-              };
-            }
-
-            const workerDef = catalogForemanRegistry.resolveWorker(workerToolName);
-            if (!workerDef) {
-              return {
-                toolMessage: new ToolMessage({
-                  tool_call_id: plannerToolCallId,
-                  name: toolCall.name,
-                  content: `Не найден worker для tool="${workerToolName}".`,
-                }),
-              };
-            }
-
-            const fakeToolCall = {
-              id: plannerToolCallId,
-              name: workerToolName,
-              args: {
-                objective: activeTaskAfterSwitch.execution.objective,
-                facts:
-                  activeTaskAfterSwitch.execution.facts.length > 0
-                    ? activeTaskAfterSwitch.execution.facts.join('\n')
-                    : undefined,
-                constraints:
-                  activeTaskAfterSwitch.execution.constraints.length > 0
-                    ? activeTaskAfterSwitch.execution.constraints.join('\n')
-                    : undefined,
-                expectedOutput: activeTaskAfterSwitch.execution.expectedOutput,
-                contextNotes: activeTaskAfterSwitch.execution.contextNotes,
-              },
-            };
-
-            const { run, toolMessage } = await executeWorkerHandoff(fakeToolCall, workerRuns, workerDef, {
-              catalogToolReply: { tool_call_id: plannerToolCallId, name: toolCall.name },
-            });
-
-            const finalTasks: RuntimePlanTask[] = (planAfterSwitch?.tasks ?? []).map((t) => {
-              if (t.taskId !== activeTaskAfterSwitch.taskId) return t;
-              return { ...t, status: mapWorkerRunStatusToPlanStatus(run.status) };
-            });
-
-            await planningRuntime.updatePlan({ runId, tasks: finalTasks });
-
-            return { run, toolMessage };
-          }
-
-          // should be unreachable due to schema
+          const plan = await planningRuntime.failPlan(runId);
           return {
             toolMessage: new ToolMessage({
               tool_call_id: plannerToolCallId,
               name: toolCall.name,
-              content: `Неизвестное действие checkpoint: "${action}".`,
+              content: `План переведён в статус "${plan.status}". Финальный ответ зафиксирован.`,
             }),
+            completion: {
+              summary,
+              finalizeOutcome: 'failed',
+            },
           };
         } catch (error) {
           return {
             toolMessage: new ToolMessage({
               tool_call_id: plannerToolCallId,
               name: toolCall.name,
-              content: error instanceof Error ? error.message : 'Ошибка foreman_checkpoint.',
+              content: error instanceof Error ? error.message : 'Ошибка finish_execution_plan.',
             }),
           };
         }
       },
       {
         attributes: buildTraceAttributes({
-          'catalog.foreman_action': foremanAction,
+          'catalog.finish_outcome': finishOutcome,
         }),
         mapResultAttributes: (result) => buildExecutionToolResultAttributes(result),
         statusMessage: ({ toolMessage }) => {
           const t = getToolMessageText(toolMessage);
           if (
-            t.startsWith('Сбой foreman_checkpoint:') ||
-            t.includes('Ошибка foreman_checkpoint.') ||
+            t.startsWith('Сбой finish_execution_plan:') ||
+            t.includes('Ошибка finish_execution_plan.') ||
+            t.includes('Runtime планирования недоступен')
+          ) {
+            return t;
+          }
+          return undefined;
+        },
+      }
+    );
+  }
+
+  if (toolCall.name === approveStepTool.name) {
+    const parsedArgs = approveStepInputSchema.safeParse(toolCall.args ?? {});
+
+    return runToolSpan(
+      'catalog_agent.approve_step',
+      async () => {
+        if (!parsedArgs.success) {
+          return {
+            toolMessage: new ToolMessage({
+              tool_call_id: plannerToolCallId,
+              name: toolCall.name,
+              content: `Сбой approve_step: ${parsedArgs.error.issues[0]?.message ?? 'некорректные аргументы.'}`,
+            }),
+          };
+        }
+
+        const planningRuntime = getPlanningRuntime();
+        const runId = getCatalogAgentRuntimeRunId();
+
+        if (!runId) {
+          return {
+            toolMessage: new ToolMessage({
+              tool_call_id: plannerToolCallId,
+              name: toolCall.name,
+              content: 'Runtime планирования недоступен для этого запуска.',
+            }),
+          };
+        }
+
+        try {
+          const activePlan = planningRuntime.getActivePlan(runId);
+          if (!activePlan) {
+            throw new Error('approve_step стал недоступен до исполнения: активный план не найден.');
+          }
+
+          const nextTask = activePlan.tasks.find((t) => t.status === 'pending');
+          if (!nextTask) {
+            throw new Error('approve_step стал недоступен до исполнения: в активном плане больше нет pending задач.');
+          }
+
+          const nextTaskIndex = activePlan.tasks.findIndex((t) => t.taskId === nextTask.taskId);
+          const previousTask = nextTaskIndex > 0 ? activePlan.tasks[nextTaskIndex - 1] : null;
+          if (!previousTask || previousTask.status !== 'completed') {
+            throw new Error('approve_step стал недоступен до исполнения: planner выбрал tool вне допустимого состояния плана.');
+          }
+
+          const tasksWithNextInProgress: RuntimePlanTask[] = activePlan.tasks.map((t) =>
+            t.taskId === nextTask.taskId ? { ...t, status: 'in_progress' as const } : t
+          );
+
+          await planningRuntime.updatePlan({ runId, tasks: tasksWithNextInProgress });
+
+          const exec = await runInProgressPlanTaskAndSyncRuntime({
+            runId,
+            workerRuns,
+            replyToToolCall: { tool_call_id: plannerToolCallId, name: toolCall.name },
+            phase: 'approve_step',
+          });
+          if (!exec.ok) {
+            return exec.run ? { run: exec.run, toolMessage: exec.toolMessage } : { toolMessage: exec.toolMessage };
+          }
+
+          const { run, planAfterWorker, completedTaskId } = exec;
+          const narrative = buildPlannerSubtaskNarrative({
+            phase: 'approve_step',
+            plan: planAfterWorker,
+            completedTaskId,
+            run,
+          });
+
+          return {
+            run,
+            toolMessage: new ToolMessage({
+              tool_call_id: plannerToolCallId,
+              name: toolCall.name,
+              content:
+                'approve_step применён; подзадача отработана воркером. Подробности шага — в следующем сообщении.',
+            }),
+            plannerFollowUpMessages: [new HumanMessage(narrative)],
+          };
+        } catch (error) {
+          return {
+            toolMessage: new ToolMessage({
+              tool_call_id: plannerToolCallId,
+              name: toolCall.name,
+              content: error instanceof Error ? error.message : 'Ошибка approve_step.',
+            }),
+          };
+        }
+      },
+      {
+        mapResultAttributes: (result) => buildExecutionToolResultAttributes(result),
+        statusMessage: ({ toolMessage }) => {
+          const t = getToolMessageText(toolMessage);
+          if (
+            t.startsWith('Сбой approve_step:') ||
+            t.includes('Ошибка approve_step.') ||
             t.includes('Runtime планирования недоступен')
           ) {
             return t;

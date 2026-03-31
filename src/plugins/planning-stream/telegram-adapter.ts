@@ -6,7 +6,6 @@ const taskStatusIcons: Record<RuntimePlanTask['status'], string> = {
   pending: '◻️',
   in_progress: '🔄',
   completed: '✅',
-  blocked: '⛔',
   failed: '❌',
   skipped: '⏭️',
 };
@@ -28,7 +27,7 @@ function formatTask(task: RuntimePlanTask) {
 }
 
 export function renderRuntimePlan(plan: RuntimePlan) {
-  const lines = ['План выполнения'];
+  const lines = [];
 
   if (plan.status !== 'active') {
     lines.push(`Статус: ${planStatusLabels[plan.status]}`);

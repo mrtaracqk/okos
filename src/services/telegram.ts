@@ -1,6 +1,8 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { isMarkdown } from '../utils';
 
+type EditChatMessageExtras = Omit<TelegramBot.EditMessageTextOptions, 'chat_id' | 'message_id'>;
+
 class TelegramService {
   private static instance: TelegramBot;
   private static isInitialized = false;
@@ -106,6 +108,28 @@ class TelegramService {
   ): Promise<TelegramBot.Message | boolean> {
     const bot = TelegramService.getInstance();
     return await bot.editMessageText(message, options);
+  }
+
+  /** Same Markdown heuristic as {@link sendMessage}. */
+  static async editChatMessageText(
+    chatId: number,
+    messageId: number,
+    message: string,
+    extraOptions?: EditChatMessageExtras
+  ): Promise<TelegramBot.Message | boolean> {
+    const bot = TelegramService.getInstance();
+    const resolvedExtras =
+      extraOptions?.parse_mode || !isMarkdown(message)
+        ? extraOptions
+        : {
+            ...extraOptions,
+            parse_mode: 'Markdown' as TelegramBot.ParseMode,
+          };
+    return await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      ...resolvedExtras,
+    });
   }
 }
 

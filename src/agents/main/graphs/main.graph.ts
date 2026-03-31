@@ -1,6 +1,11 @@
 import { AIMessage, BaseMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { Annotation, BaseCheckpointSaver, END, START, StateGraph, getConfig } from '@langchain/langgraph';
-import { buildCatalogDelegationResultFromCatalogState, catalogAgentGraph, type CatalogDelegationResult } from '../../catalog';
+import {
+  buildCatalogDelegationResultFromCatalogState,
+  catalogAgentGraph,
+  formatCatalogDelegationUserMessage,
+  type CatalogDelegationResult,
+} from '../../catalog';
 import { graphCheckpointer } from '../../shared/checkpointing';
 import { extractMessageText, getLastAIMessage, getLastAIMessageText } from '../../shared/messageUtils';
 import {
@@ -76,19 +81,17 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
                 ? toolCall.name
                 : '';
 
+          const failedDelegation: CatalogDelegationResult = { status: 'failed', summary };
           return {
             messages: [
               new ToolMessage({
                 tool_call_id: delegateToolCallId,
                 name: toolCall.name,
-                content: summary,
+                content: failedDelegation.summary,
               }),
-              new AIMessage(summary),
+              new AIMessage(formatCatalogDelegationUserMessage(failedDelegation)),
             ],
-            catalogDelegation: {
-              status: 'failed',
-              summary,
-            },
+            catalogDelegation: failedDelegation,
           };
         }
 
@@ -144,13 +147,14 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
               ? toolCall.name
               : '';
 
+        const userFacingText = formatCatalogDelegationUserMessage(delegationResult);
         const messages: BaseMessage[] = [
           new ToolMessage({
             tool_call_id: delegateToolCallId,
             name: toolCall.name,
             content: delegationResult.summary,
           }),
-          new AIMessage(delegationResult.summary),
+          new AIMessage(userFacingText),
         ];
 
         return {
@@ -199,10 +203,7 @@ export function createMainGraph({
   return new StateGraph(MainGraphStateAnnotation)
     .addNode('responseAgent', responseAgentNode)
     .addNode('catalogAgent', createCatalogAgentNode(progressReporter))
-    .addNode('end', async (state) => {
-      await progressReporter.onRunComplete({ chatId: state.chatId });
-      return {};
-    })
+    .addNode('end', async () => ({}))
     .addEdge(START, 'responseAgent')
     .addConditionalEdges('responseAgent', (state) => getMainRoute(state, progressReporter), {
       catalogAgent: 'catalogAgent',

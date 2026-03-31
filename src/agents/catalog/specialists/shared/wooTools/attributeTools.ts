@@ -1,22 +1,41 @@
 import { z } from 'zod';
 import { createWooTool } from '../../../../../services/woo/createWooTool';
-import { buildToolSuccess } from '../../../../../services/woo/wooToolResult';
+import { getWooExecuteWithHeaders } from '../../../../../services/woo/wooClient';
+import { parseWpCollectionHeaders } from '../../../../../services/woo/wpCollectionHeaders';
+import { buildPagedListSuccess, buildToolSuccess } from '../../../../../services/woo/wooToolResult';
 import type {
   ProductsAttributesCreateBody,
   ProductsAttributeUpdateBody,
   ProductsAttributeTermsCreateBody,
   ProductsAttributeTermUpdateBody,
+  ProductsAttributeTermsListQuery,
 } from '../../../../../services/woo-sdk/src/models/products';
 
 const listAttributesTool = createWooTool({
   name: 'wc.v3.products_attributes_list',
-  description: 'Получить список глобальных атрибутов товаров.',
+  description:
+    'Получить список глобальных атрибутов товаров с опциональной фильтрацией: страница, per_page, поиск по названию (search). Ответ: { items, count, total?, total_pages?, page?, per_page? }.',
   requiresApproval: false,
-  schema: z.object({}),
-  run: async (_input, { client }) => {
-    const response = await client.products.listProductsAttributes();
-    const list = Array.isArray(response) ? response : [];
-    return buildToolSuccess(list);
+  schema: z.object({
+    page: z.coerce.number().int().min(1).max(5).optional(),
+    per_page: z.coerce.number().int().min(1).max(20),
+    search: z.string().describe('Поиск (всегда) по названию атрибута (REST query search).')
+  }),
+  run: async (input) => {
+    const page = input.page ?? 1;
+    const per_page = input.per_page ?? 10;
+    const { data, headers } = await getWooExecuteWithHeaders()({
+      method: 'GET',
+      routeTemplate: '/products/attributes',
+      query: {
+        page,
+        per_page,
+        search: input.search,
+      },
+    });
+    const list = Array.isArray(data) ? data : [];
+    const { total, total_pages } = parseWpCollectionHeaders(headers);
+    return buildPagedListSuccess(list, { total, total_pages, page, per_page });
   },
 });
 
@@ -86,18 +105,32 @@ const deleteAttributeTool = createWooTool({
 
 const listAttributeTermsTool = createWooTool({
   name: 'wc.v3.products_attributes_terms_list',
-  description: 'Получить список значений (терминов) атрибута по attribute_id.',
+  description:
+    'Получить список значений (терминов) атрибута по attribute_id. Опционально: страница, per_page, поиск по названию термина (search). Ответ: { items, count, total?, total_pages?, page?, per_page? }.',
   requiresApproval: false,
   schema: z.object({
     attribute_id: z.coerce.number().int().min(1).describe('ID атрибута.'),
+    page: z.coerce.number().int().min(1).max(5).optional(),
+    per_page: z.coerce.number().int().min(1).max(30),
+    search: z.string().describe('Поиск по названию (вхождению) термина.'),
   }),
-  run: async (input, { client }) => {
-    const response = await client.products.listProductsAttributeTerms({
+  run: async (input) => {
+    const page = input.page ?? 1;
+    const per_page = input.per_page ?? 10;
+    const query: ProductsAttributeTermsListQuery = {
+      page,
+      per_page,
+      search: input.search,
+    };
+    const { data, headers } = await getWooExecuteWithHeaders()({
+      method: 'GET',
+      routeTemplate: '/products/attributes/{attribute_id}/terms',
       path: { attribute_id: input.attribute_id },
-      query: {},
+      query,
     });
-    const list = Array.isArray(response) ? response : [];
-    return buildToolSuccess(list);
+    const list = Array.isArray(data) ? data : [];
+    const { total, total_pages } = parseWpCollectionHeaders(headers);
+    return buildPagedListSuccess(list, { total, total_pages, page, per_page });
   },
 });
 

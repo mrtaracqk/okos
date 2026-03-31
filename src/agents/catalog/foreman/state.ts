@@ -18,12 +18,12 @@ export const CatalogGraphStateAnnotation = Annotation.Root({
     reducer: (_, newWorkerRuns) => newWorkerRuns,
     default: () => [],
   }),
-  /** Last worker result envelope (source of truth for planner decisions). */
+  /** Last worker result envelope (e.g. trace attrs); planner decisions use HumanMessage step narratives. */
   latestWorkerResult: Annotation<WorkerResultEnvelope | null>({
     reducer: (_, newValue) => newValue,
     default: () => null,
   }),
-  /** Artifacts collected from all worker runs. */
+  /** Aggregated worker artifacts (no reader in graph today). */
   workerArtifacts: Annotation<unknown[]>({
     reducer: (_, newValue) => newValue,
     default: () => [],

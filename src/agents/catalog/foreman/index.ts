@@ -15,12 +15,11 @@ import { getPlanningRuntime } from '../../../runtime/planning';
 import { getLastAIMessageText } from '../../shared/messageUtils';
 import { renderPlaybookIndexForPrompt } from '../playbooks';
 import { type WorkerRun } from '../contracts/workerRun';
-import { type WorkerResultEnvelope } from '../contracts/workerResult';
 import { finalizeCatalogExecutionPlan, getCatalogAgentRuntimeRunId } from './planning';
 import { type CatalogForemanRoute, type CatalogRequestContext, CatalogGraphStateAnnotation } from './state';
 import { type CatalogToolCompletion, executeCatalogToolCall } from './toolDispatcher';
 import { getLastFailedWorker } from './workerRunState';
-import { catalogForemanRegistry } from './workerRegistry';
+import { getCatalogForemanAgentTools } from './workerRegistry';
 
 const MAX_PLANNER_ITERATIONS = 20;
 const PLANNER_LIMIT_MESSAGE =
@@ -31,7 +30,9 @@ function buildCatalogSystemMessage() {
 }
 
 function buildCatalogRunnableModel() {
-  return chatModel.bindTools(catalogForemanRegistry.agentTools);
+  const runId = getCatalogAgentRuntimeRunId();
+  const activePlan = runId ? getPlanningRuntime().getActivePlan(runId) : null;
+  return chatModel.bindTools(getCatalogForemanAgentTools(activePlan));
 }
 
 function toErrorMessage(error: unknown) {
@@ -47,7 +48,7 @@ function buildFailureState(error: unknown) {
   };
 }
 
-function formatActivePlanTasks(runId: string) {
+function formatActivePlanTaskSummary(runId: string): string | null {
   const activePlan = getPlanningRuntime().getActivePlan(runId);
   if (!activePlan) {
     return null;
@@ -57,54 +58,10 @@ function formatActivePlanTasks(runId: string) {
     (task) => `- ${task.taskId}: ${task.title} [owner=${task.owner}, status=${task.status}]${task.notes ? ` (${task.notes})` : ''}`
   );
 
-  return {
-    plan: activePlan,
-    summary: taskLines.join('\n'),
-  };
+  return taskLines.join('\n');
 }
 
 type PlannerState = typeof CatalogGraphStateAnnotation.State;
-
-/**
- * Builds the canonical structured-context message for the planner.
- * Planner decisions should be based on this, not on ToolMessage.content (which remains auxiliary).
- */
-function buildStructuredContextMessage(state: PlannerState): HumanMessage {
-  const lines: string[] = ['--- Контекст (structured state) ---'];
-
-  if (state.requestContext?.initialPrompt) {
-    lines.push(`Исходный запрос: ${state.requestContext.initialPrompt.slice(0, 800)}`);
-  }
-
-  if (state.workerRuns.length > 0) {
-    lines.push(
-      '',
-      'Выполненные шаги воркеров:',
-      ...state.workerRuns.map((r) => `- ${r.agent}: ${r.status}${r.task ? ` — ${r.task.slice(0, 120)}` : ''}`)
-    );
-  }
-
-  const last = state.latestWorkerResult;
-  if (last) {
-    lines.push(
-      '',
-      'Последний результат воркера (source of truth):',
-      `- status: ${last.status}`,
-      `- facts: ${last.facts.length} (${last.facts.slice(0, 3).join('; ')}${last.facts.length > 3 ? '…' : ''})`,
-      `- missingInputs: ${last.missingInputs.length}${last.missingInputs.length > 0 ? ` — ${last.missingInputs.join(', ')}` : ''}`
-    );
-    if (last.summary?.trim()) {
-      lines.push(`- summary: ${last.summary.trim()}`);
-    }
-  }
-
-  if (state.workerArtifacts.length > 0) {
-    lines.push('', `Собрано артефактов: ${state.workerArtifacts.length}`);
-  }
-
-  lines.push('---');
-  return new HumanMessage(lines.join('\n'));
-}
 
 function deriveRequestContext(state: PlannerState): CatalogRequestContext | null {
   if (state.requestContext != null) return state.requestContext;
@@ -124,14 +81,13 @@ const plannerNode = async (
       const runnableModel = buildCatalogRunnableModel();
       const iteration = state.plannerIteration + 1;
       const plannerMessages = [];
-      const structuredContextMessage = buildStructuredContextMessage(state);
       const requestContextUpdate = deriveRequestContext(state);
 
       try {
         let { response, toolCalls } = await runChainSpan(
           'catalog_agent.planner_iteration',
           async () => {
-            const llmMessages = [systemMessage, ...state.messages, structuredContextMessage];
+            const llmMessages = [systemMessage, ...state.messages];
             const response = await runLlmSpan(
               'catalog_agent.planner_iteration.llm',
               async () => runnableModel.invoke(llmMessages),
@@ -175,20 +131,20 @@ const plannerNode = async (
         plannerMessages.push(response);
 
         const runId = getCatalogAgentRuntimeRunId();
-        const activePlanSnapshot = runId ? formatActivePlanTasks(runId) : null;
-        if (toolCalls.length === 0 && activePlanSnapshot) {
+        const activePlanSummary = runId ? formatActivePlanTaskSummary(runId) : null;
+        if (toolCalls.length === 0 && activePlanSummary) {
           const correctionMessage = new HumanMessage(
             [
               'Execution plan всё ещё активен. Нельзя завершать задачу свободным текстом, пока активный план не закрыт.',
               'Сделай один из следующих шагов:',
-              '- вызови `foreman_checkpoint(action=approve)` (runtime запустит следующую pending подзадачу)',
-              '- вызови `foreman_checkpoint(action=replan)` и затем пересобери хвост через `run_execution_plan([...])`',
-              '- или закрой план через `foreman_checkpoint(action=complete|fail, result.summary=...)`; runtime сразу завершит граф этим итогом',
+              '- вызови `approve_step` (runtime запустит следующую pending подзадачу)',
+              '- или пересобери план через `new_execution_plan([...])`, если нужны другие входные данные для хвоста',
+              '- или закрой план через `finish_execution_plan(outcome=completed|failed, summary=...)`; runtime сразу завершит граф этим итогом',
               'Текущий активный план:',
-              activePlanSnapshot.summary,
+              activePlanSummary,
             ].join('\n')
           );
-          const correctedLlmMessages = [systemMessage, ...state.messages, response, correctionMessage, structuredContextMessage];
+          const correctedLlmMessages = [systemMessage, ...state.messages, response, correctionMessage];
           const correctedResponse = await runLlmSpan(
             'catalog_agent.planner_iteration.correction_llm',
             async () => runnableModel.invoke(correctedLlmMessages),
@@ -213,14 +169,14 @@ const plannerNode = async (
             status: toolCalls.length > 0 ? 'tool_calls_after_correction' : 'text_response_after_correction',
           });
 
-          const activePlanStillOpen = runId ? formatActivePlanTasks(runId) : null;
-          if (toolCalls.length === 0 && activePlanStillOpen) {
+          const activePlanSummaryStillOpen = runId ? formatActivePlanTaskSummary(runId) : null;
+          if (toolCalls.length === 0 && activePlanSummaryStillOpen) {
             return {
               messages: plannerMessages,
               plannerIteration: iteration,
               ...(requestContextUpdate != null ? { requestContext: requestContextUpdate } : {}),
               ...buildFailureState(
-                `Бригадир попытался завершить работу без tool call, хотя execution plan всё ещё активен:\n${activePlanStillOpen.summary}`
+                `Бригадир попытался завершить работу без tool call, хотя execution plan всё ещё активен:\n${activePlanSummaryStillOpen}`
               ),
             };
           }
@@ -308,12 +264,9 @@ const dispatchToolsNode = async (
       const runId = getCatalogAgentRuntimeRunId();
       const activePlan = runId ? getPlanningRuntime().getActivePlan(runId) : null;
       const sequencedToolNames = new Set([
-        'run_execution_plan',
-        'foreman_checkpoint',
-        'run_category_worker',
-        'run_attribute_worker',
-        'run_product_worker',
-        'run_variation_worker',
+        'new_execution_plan',
+        'approve_step',
+        'finish_execution_plan',
       ]);
       const hasSequencedToolCall = state.pendingToolCalls.some((t) => sequencedToolNames.has(t.name));
       const gateProtocolMode = Boolean(activePlan) || hasSequencedToolCall;
@@ -323,7 +276,7 @@ const dispatchToolsNode = async (
           const toolCall = state.pendingToolCalls[idx];
 
           if (idx > 0 && gateProtocolMode) {
-            // Stage 1 contract: `planner -> run_execution_plan -> worker -> foreman_checkpoint`
+            // Stage 1 contract: `planner -> new_execution_plan | approve_step -> worker -> ...`
             // must not be bypassed by multiple tool calls in a single LLM response.
             // We still return ToolMessages for ignored calls to keep tool-call protocol consistent.
             const toolCallId =
@@ -339,17 +292,21 @@ const dispatchToolsNode = async (
                 content:
                   'Протокол выполнения: в одном ответе выполняй только один tool call. Дополнительный tool call ' +
                   `"${toolCall.name}"` +
-                  ' не выполнен; повтори его в следующей итерации после checkpoint.',
+                  ' не выполнен; повтори его в следующей итерации после ответа по предыдущему tool call.',
               })
             );
             continue;
           }
 
-          const { run, toolMessage, completion: toolCompletion } = await executeCatalogToolCall(toolCall, workerRuns);
+          const { run, toolMessage, completion: toolCompletion, plannerFollowUpMessages } =
+            await executeCatalogToolCall(toolCall, workerRuns);
           if (run) {
             workerRuns.push(run);
           }
           messages.push(toolMessage);
+          if (plannerFollowUpMessages?.length) {
+            messages.push(...plannerFollowUpMessages);
+          }
           if (toolCompletion) {
             completion = toolCompletion;
           }
@@ -540,13 +497,3 @@ function buildCatalogAgentGraph(checkpointer?: BaseCheckpointSaver | boolean, na
 }
 
 export const catalogAgentGraph = buildCatalogAgentGraph(true, 'catalog-agent');
-
-const catalogAgentRootGraph = buildCatalogAgentGraph(undefined, 'catalog-agent-root');
-
-export async function runCatalogAgent(userRequest: string): Promise<string> {
-  const result = await catalogAgentRootGraph.invoke({
-    messages: [new HumanMessage(userRequest)],
-  });
-
-  return getLastAIMessageText(result.messages);
-}

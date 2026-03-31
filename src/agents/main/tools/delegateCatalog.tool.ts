@@ -1,8 +1,5 @@
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { runCatalogAgent } from '../../catalog';
-import { renderCatalogDelegationRequestToPrompt } from '../catalogDelegation';
-import type { CatalogDelegationRequest } from '../catalogDelegation';
 
 const catalogDelegationRequestSchema = z.object({
   goal: z.string().min(1).describe('Цель запроса по каталогу.'),
@@ -11,16 +8,15 @@ const catalogDelegationRequestSchema = z.object({
   desiredOutcome: z.string().min(1).describe('Желаемый результат для пользователя.'),
 });
 
+/**
+ * Схема и описание для `bindTools`: модель вызывает тул, а исполнение делает узел
+ * `catalogAgent` в `main.graph` (подграф + форматирование), не `tool.invoke`.
+ */
 export const delegateCatalogTool = tool(
-  async (args: z.infer<typeof catalogDelegationRequestSchema>) => {
-    const request: CatalogDelegationRequest = {
-      goal: args.goal,
-      facts: args.facts ?? [],
-      constraints: args.constraints ?? [],
-      desiredOutcome: args.desiredOutcome,
-    };
-    const prompt = renderCatalogDelegationRequestToPrompt(request);
-    return runCatalogAgent(prompt);
+  async () => {
+    throw new Error(
+      'delegate_to_catalog_agent: execution is handled by main graph catalogAgent node, not tool.invoke.'
+    );
   },
   {
     name: 'delegate_to_catalog_agent',

@@ -1,28 +1,42 @@
 import { z } from 'zod';
 import { createWooTool } from '../../../../../services/woo/createWooTool';
-import { buildToolSuccess } from '../../../../../services/woo/wooToolResult';
+import { getWooExecuteWithHeaders } from '../../../../../services/woo/wooClient';
+import { parseWpCollectionHeaders } from '../../../../../services/woo/wpCollectionHeaders';
+import { buildPagedListSuccess, buildToolSuccess } from '../../../../../services/woo/wooToolResult';
 import type {
   ProductVariationsCreateBody,
   ProductVariationUpdateBody,
   ProductVariationsBatchUpdateBody,
 } from '../../../../../services/woo-sdk/src/models/products';
 
+/** Атрибуты вариации: id глобального атрибута (GET /products/attributes), option — значение терма. Без name. */
+const variationAttributeItemSchema = z.object({
+  id: z.coerce.number().int().min(1),
+  option: z.string().min(1),
+});
+
 const listVariationsTool = createWooTool({
   name: 'wc.v3.products_variations_list',
-  description: 'Получить список вариаций товара по product_id.',
+  description:
+    'Получить список вариаций товара по product_id. Ответ: { items, count, total?, total_pages?, page, per_page }.',
   requiresApproval: false,
   schema: z.object({
     product_id: z.coerce.number().int().min(1),
     page: z.number().int().min(1).optional(),
     per_page: z.number().int().min(1).max(100).optional(),
   }),
-  run: async (input, { client }) => {
-    const response = await client.products.listProductVariations({
+  run: async (input) => {
+    const page = input.page ?? 1;
+    const per_page = input.per_page ?? 10;
+    const { data, headers } = await getWooExecuteWithHeaders()({
+      method: 'GET',
+      routeTemplate: '/products/{product_id}/variations',
       path: { product_id: input.product_id },
-      query: { page: input.page, per_page: input.per_page },
+      query: { page, per_page },
     });
-    const list = Array.isArray(response) ? response : [];
-    return buildToolSuccess(list);
+    const list = Array.isArray(data) ? data : [];
+    const { total, total_pages } = parseWpCollectionHeaders(headers);
+    return buildPagedListSuccess(list, { total, total_pages, page, per_page });
   },
 });
 
@@ -45,7 +59,7 @@ const getVariationTool = createWooTool({
 const createVariationTool = createWooTool({
   name: 'wc.v3.products_variations_create',
   description:
-    'Создать вариацию товара. Обязательно: product_id. Опционально: sku, regular_price, sale_price, stock_quantity, attributes, status и др.',
+    'Создать вариацию товара. Обязательно: product_id. Опционально: sku, regular_price, sale_price, stock_quantity, attributes (элементы: id атрибута из wc.v3.products_attributes_list, option — значение), status и др.',
   requiresApproval: true,
   schema: z.object({
     product_id: z.coerce.number().int().min(1),
@@ -55,9 +69,7 @@ const createVariationTool = createWooTool({
     stock_quantity: z.number().optional(),
     stock_status: z.enum(['instock', 'outofstock', 'onbackorder']).optional(),
     status: z.enum(['draft', 'pending', 'private', 'publish']).optional(),
-    attributes: z
-      .array(z.object({ id: z.number().optional(), name: z.string().optional(), option: z.string().optional() }))
-      .optional(),
+    attributes: z.array(variationAttributeItemSchema).optional(),
     description: z.string().optional(),
     manage_stock: z.boolean().optional(),
     backorders: z.enum(['no', 'notify', 'yes']).optional(),
@@ -87,7 +99,8 @@ const createVariationTool = createWooTool({
 
 const updateVariationTool = createWooTool({
   name: 'wc.v3.products_variations_update',
-  description: 'Обновить вариацию по product_id и id. Передай только изменяемые поля.',
+  description:
+    'Обновить вариацию по product_id и id. Передай только изменяемые поля. attributes: { id, option } — id глобального атрибута, без name.',
   requiresApproval: true,
   schema: z.object({
     product_id: z.coerce.number().int().min(1),
@@ -98,9 +111,7 @@ const updateVariationTool = createWooTool({
     stock_quantity: z.number().optional(),
     stock_status: z.enum(['instock', 'outofstock', 'onbackorder']).optional(),
     status: z.enum(['draft', 'pending', 'private', 'publish']).optional(),
-    attributes: z
-      .array(z.object({ id: z.number().optional(), name: z.string().optional(), option: z.string().optional() }))
-      .optional(),
+    attributes: z.array(variationAttributeItemSchema).optional(),
     description: z.string().optional(),
     manage_stock: z.boolean().optional(),
     backorders: z.enum(['no', 'notify', 'yes']).optional(),
