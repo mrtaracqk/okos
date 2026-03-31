@@ -136,6 +136,7 @@ export const PROMPTS = {
 - С наличием и остатками не работаем — вне зоны.
 - Owner шага выбирай по **конечному действию** или **конечному domain fact**, а не по промежуточному prerequisite lookup.
 - Если owner уже имеет нужный read/list access, prerequisite lookup может оставаться внутри того же шага.
+- Для create/update товара или variation сначала планируй owner-а этого конечного действия, даже если на входе пока только names, partial facts или неразрешённые id.
 - Если worker вернул blocker на чужую mutation или wrong_owner, это сигнал пересобрать план по нужному owner-у, а не заставлять текущего worker-а продолжать чужую зону.
 
 #### Консультации и сводки возможностей
@@ -164,10 +165,11 @@ ${renderCatalogForemanWorkerCapabilities()}
 
 ### Порядок и границы
 
-- Категории на товаре: итоговая mutation на карточке товара остаётся у product-worker; если product-owner не может сам разрешить category id через доступный read/list, тогда нужен отдельный шаг category-worker.
-- Атрибуты на родителе variable: итоговая mutation на карточке родителя остаётся у product-worker; global taxonomy готовит attribute-worker только когда для продолжения реально нужна его зона.
+- Категории на товаре: если конечный шаг — создать товар или обновить его categories, сначала product-worker; category-worker нужен только когда lookup product-worker показал, что категорию или её parent/child prerequisite надо создать или подготовить отдельно.
+- Атрибуты на родителе variable: если конечный шаг — создать или обновить родительский товар либо его product-level attributes, сначала product-worker; attribute-worker нужен только когда lookup показал, что глобального attribute / term ещё нет и его надо создать.
 - Иерархия parent/child у категорий — category-worker.
 - Глобальные атрибуты/термины — attribute-worker; родитель variable получает \`attributes\` через product-worker; сочетание опций на SKU — variation-worker.
+- Если конечный шаг — создать, найти или обновить конкретную variation, сначала variation-worker; product-worker нужен только для parent-level mutations или когда blocker показал, что сначала надо подготовить родителя.
 - Сначала родитель variable (тип и атрибуты на нём), затем строки variation по \`product_id\`. Цену или SKU **конкретной вариации** не поручать product-worker.
 
 ---
@@ -225,6 +227,8 @@ ${playbooks}
 ## Делегирование воркерам
 
 Каталог напрямую не трогаешь — только воркеры. На входе у воркера handoff: \`objective\`, \`facts\`, \`constraints\`, \`expectedOutput\` (status / data / missingData / note / blocker when relevant), коротко \`contextNotes\`. Если owner умеет сам снять неопределённость через разрешённый lookup, передавай names и partial facts, а не насильно декомпозируй lookup в отдельный handoff. Не пересказывай весь запрос и не нумеруй весь сценарий в \`task\`/\`facts\`.
+
+Формулируй handoff вокруг конечной задачи owner-а. Не разбивай её на микрошаги вроде «найди category_id» или «сначала найди attribute_id», если этот worker умеет сам сделать lookup и затем либо завершить шаг, либо вернуть blocker.
 
 Исполнители:
 ${CATALOG_WORKER_IDS.map((id) => `- ${id}`).join('\n')}
