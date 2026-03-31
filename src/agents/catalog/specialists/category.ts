@@ -3,12 +3,12 @@ import { PROMPTS } from '../../../prompts';
 import { CATALOG_WORKER_KNOWLEDGE } from '../catalogWorkerKnowledge';
 import { WORKER_RESULT_TOOL_NAME, createWorkerResultTool } from '../contracts/workerResult';
 import { createToolLoopGraph } from '../../shared/toolLoopGraph';
-import { categoryWorkerWooTools } from './shared/wooTools/categoryTools';
+import { getCatalogWorkerRuntimeTools } from './shared/workerToolsets';
 import { type CatalogWorkerDefinition } from './shared/workerDefinition';
 
 const k = CATALOG_WORKER_KNOWLEDGE['category-worker'];
 
-const categoryWorkerTools = [...categoryWorkerWooTools, createWorkerResultTool()];
+const categoryWorkerTools = [...getCatalogWorkerRuntimeTools(k.id), createWorkerResultTool()];
 
 function buildCategoryWorkerGraph() {
   return createToolLoopGraph({

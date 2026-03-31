@@ -15,7 +15,7 @@ const variationAttributeItemSchema = z.object({
   option: z.string().min(1),
 });
 
-const listVariationsTool = createWooTool({
+export const listVariationsTool = createWooTool({
   name: 'wc.v3.products_variations_list',
   description:
     'Получить список вариаций товара по product_id. Ответ: { items, count, total?, total_pages?, page, per_page }.',
@@ -40,7 +40,7 @@ const listVariationsTool = createWooTool({
   },
 });
 
-const getVariationTool = createWooTool({
+export const getVariationTool = createWooTool({
   name: 'wc.v3.products_variations_read',
   description: 'Прочитать одну вариацию по product_id и id вариации.',
   requiresApproval: false,
@@ -56,7 +56,7 @@ const getVariationTool = createWooTool({
   },
 });
 
-const createVariationTool = createWooTool({
+export const createVariationTool = createWooTool({
   name: 'wc.v3.products_variations_create',
   description:
     'Создать вариацию товара. Обязательно: product_id. Опционально: sku, regular_price, sale_price, stock_quantity, attributes (элементы: id атрибута из wc.v3.products_attributes_list, option — значение), status и др.',
@@ -97,7 +97,7 @@ const createVariationTool = createWooTool({
   },
 });
 
-const updateVariationTool = createWooTool({
+export const updateVariationTool = createWooTool({
   name: 'wc.v3.products_variations_update',
   description:
     'Обновить вариацию по product_id и id. Передай только изменяемые поля. attributes: { id, option } — id глобального атрибута, без name.',
@@ -139,7 +139,7 @@ const updateVariationTool = createWooTool({
   },
 });
 
-const deleteVariationTool = createWooTool({
+export const deleteVariationTool = createWooTool({
   name: 'wc.v3.products_variations_delete',
   description: 'Удалить вариацию по product_id и id. Опционально: force=true для постоянного удаления.',
   requiresApproval: true,
@@ -157,7 +157,7 @@ const deleteVariationTool = createWooTool({
   },
 });
 
-const batchVariationsTool = createWooTool({
+export const batchVariationsTool = createWooTool({
   name: 'wc.v3.products_variations_batch',
   description:
     'Пакетное создание/обновление/удаление вариаций товара. product_id обязательно. body: create (массив объектов вариаций), delete (массив id), update (массив { id, ...поля }).',
@@ -182,7 +182,7 @@ const batchVariationsTool = createWooTool({
   },
 });
 
-const generateVariationsTool = createWooTool({
+export const generateVariationsTool = createWooTool({
   name: 'wc.v3.products_variations_generate_create',
   description: 'Сгенерировать все вариации товара по комбинациям его атрибутов. Обязательно: product_id.',
   requiresApproval: true,
@@ -206,4 +206,4 @@ export const variationWorkerWooTools = [
   deleteVariationTool,
   batchVariationsTool,
   generateVariationsTool,
-];
+] as const;

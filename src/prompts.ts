@@ -1,5 +1,6 @@
 import { CATALOG_WORKER_KNOWLEDGE } from './agents/catalog/catalogWorkerKnowledge';
 import { CATALOG_WORKER_IDS } from './agents/catalog/contracts/catalogWorkerId';
+import { renderCatalogForemanWorkerCapabilities } from './agents/catalog/foreman/workerCapabilitiesSummary';
 import { formatLocaleDateTime } from './utils';
 
 /** Единая формулировка про валюту каталога (MAIN, catalog-agent, воркеры). */
@@ -147,6 +148,8 @@ export const PROMPTS = {
 - Нужна деталь по **чужому** домену — один узкий шаг соответствующему **воркеру** (консультация: «объясни границы / возможности / порядок в твоей зоне»), затем собери итог в \`summary\`.
 - Если хватает тебя и playbook — \`finish_execution_plan\` с \`summary\`, без лишнего плана воркеров.
 - Не завершай план с \`failed\` или отказом только потому, что пользователь спросил «что вы умеете», а не дал сущность в каталоге.
+
+${renderCatalogForemanWorkerCapabilities()}
 
 ---
 

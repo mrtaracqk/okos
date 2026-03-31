@@ -40,9 +40,11 @@ const productWorkerKnowledge = {
     'Атрибуты на товаре (и default при необходимости) меняй только через products_append_attribute и products_remove_attribute, не через products_update.',
     'Для поиска товара обычно начинай с products_list по search/status, а когда нужен подтверждённый объект конкретного товара, переходи к products_read по ID.',
     'products_list и products_read возвращают сокращённую проекцию товара; не приписывай карточке поля, которых нет в payload конкретного tool result.',
+    'Для подготовки product-owned шага ты можешь делать read-only lookup в соседних доменах: категории, глобальные атрибуты/term-ы и variation того же товара.',
+    'Если lookup показал, что категории, атрибута или term-а ещё нет и его нужно создать, не делай чужую mutation: верни blocker на category-worker или attribute-worker.',
     'Для variable product поля attributes и default_attributes относятся к родительскому товару и не заменяют список дочерних variation.',
     'Если запрошенный факт может различаться между variation (цена, SKU, сочетание опций и т.п.), не считай ответ завершённым на одних данных родителя.',
-    'У тебя нет инструментов для чтения variation. В таких случаях прямо опирайся только на parent-level факты и указывай, что для variation-specific данных нужен variation-worker.',
+    'Read-only доступ к variation нужен только как lookup-контекст; variation-specific mutation по-прежнему остаётся зоной variation-worker.',
   ],
 } as const satisfies CatalogWorkerKnowledgeEntry;
 
@@ -50,9 +52,11 @@ const variationWorkerKnowledge = {
   id: 'variation-worker',
   domainRules: [
     'Ты работаешь только с дочерними variation существующего variable product.',
-    'Чтение и изменение variation адресуются через пару product_id + variation id; если родитель не установлен, задача ещё не готова к исполнению.',
+    'Чтение и изменение variation адресуются через пару product_id + variation id; если родитель не установлен во входе, сначала разреши его через доступный product lookup.',
     'Ты отвечаешь за факты и изменения конкретных variation: опции, цены, SKU, статусы и прочие поля строки вариации.',
+    'Для подготовки variation-owned шага ты можешь делать read-only lookup родительского товара и глобальных атрибутов/term-ов, чтобы подтвердить product_id и attribute context.',
     'Ты не меняешь поля родительского товара, его categories, общие attributes или default_attributes; это зона product-worker.',
+    'Если родительский товар или нужная taxonomy отсутствуют и для продолжения их надо создать либо подготовить, верни blocker на product-worker или attribute-worker.',
     'Инструменты batch и generate применяй только для набора variation внутри уже определённого родительского товара.',
   ],
 } as const satisfies CatalogWorkerKnowledgeEntry;

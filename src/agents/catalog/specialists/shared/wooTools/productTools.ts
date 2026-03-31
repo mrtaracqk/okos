@@ -103,7 +103,7 @@ const toProductSummary = (product: any) => {
   };
 };
 
-const listProductsTool = createWooTool({
+export const listProductsTool = createWooTool({
   name: 'wc.v3.products_list',
   description: 'Список товаров (пагинация, поиск, фильтр по category id).',
   requiresApproval: false,
@@ -141,7 +141,7 @@ const listProductsTool = createWooTool({
   },
 });
 
-const getProductTool = createWooTool({
+export const getProductTool = createWooTool({
   name: 'wc.v3.products_read',
   description:
     'Прочитать один товар по ID.',
@@ -159,7 +159,7 @@ const createProductInputSchema = productsCreateBodySchema.partial().extend({
   name: z.string().min(1).describe('Название товара.'),
 });
 
-const createProductTool = createWooTool({
+export const createProductTool = createWooTool({
   name: 'wc.v3.products_create',
   description: 'Создать товар (POST /products).',
   requiresApproval: true,
@@ -177,7 +177,7 @@ const createProductTool = createWooTool({
   },
 });
 
-const updateProductTool = createWooTool({
+export const updateProductTool = createWooTool({
   name: 'wc.v3.products_update',
   description:
     'Обновить товар (PUT /products/{id}). Без полей attributes / default_attributes — для них отдельные инструменты append/remove.',
@@ -194,7 +194,7 @@ const updateProductTool = createWooTool({
   },
 });
 
-const appendProductAttributeTool = createWooTool({
+export const appendProductAttributeTool = createWooTool({
   name: 'wc.v3.products_append_attribute',
   description:
     'Добавить или слить атрибут на карточке товара: читает товар, добавляет строку в attributes (или объединяет options с существующей строкой с тем же id/name).',
@@ -273,7 +273,7 @@ const appendProductAttributeTool = createWooTool({
   },
 });
 
-const removeProductAttributeTool = createWooTool({
+export const removeProductAttributeTool = createWooTool({
   name: 'wc.v3.products_remove_attribute',
   description:
     'Убрать атрибут с карточки товара по id или name; также чистит соответствующую запись в default_attributes.',
@@ -336,7 +336,7 @@ const removeProductAttributeTool = createWooTool({
   },
 });
 
-const duplicateProductTool = createWooTool({
+export const duplicateProductTool = createWooTool({
   name: 'wc.v3.products_duplicate_create',
   description: 'Дублировать товар по ID.',
   requiresApproval: true,
@@ -359,4 +359,4 @@ export const productWorkerWooTools = [
   appendProductAttributeTool,
   removeProductAttributeTool,
   duplicateProductTool,
-];
+] as const;

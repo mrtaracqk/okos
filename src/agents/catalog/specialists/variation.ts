@@ -3,12 +3,12 @@ import { PROMPTS } from '../../../prompts';
 import { CATALOG_WORKER_KNOWLEDGE } from '../catalogWorkerKnowledge';
 import { WORKER_RESULT_TOOL_NAME, createWorkerResultTool } from '../contracts/workerResult';
 import { createToolLoopGraph } from '../../shared/toolLoopGraph';
-import { variationWorkerWooTools } from './shared/wooTools/variationTools';
+import { getCatalogWorkerRuntimeTools } from './shared/workerToolsets';
 import { type CatalogWorkerDefinition } from './shared/workerDefinition';
 
 const k = CATALOG_WORKER_KNOWLEDGE['variation-worker'];
 
-const variationWorkerTools = [...variationWorkerWooTools, createWorkerResultTool()];
+const variationWorkerTools = [...getCatalogWorkerRuntimeTools(k.id), createWorkerResultTool()];
 
 function buildVariationWorkerGraph() {
   return createToolLoopGraph({

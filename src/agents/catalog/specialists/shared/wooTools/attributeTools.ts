@@ -11,7 +11,7 @@ import type {
   ProductsAttributeTermsListQuery,
 } from '../../../../../services/woo-sdk/src/models/products';
 
-const listAttributesTool = createWooTool({
+export const listAttributesTool = createWooTool({
   name: 'wc.v3.products_attributes_list',
   description:
     'Получить список глобальных атрибутов товаров с опциональной фильтрацией: страница, per_page, поиск по названию (search). Ответ: { items, count, total?, total_pages?, page?, per_page? }.',
@@ -39,7 +39,7 @@ const listAttributesTool = createWooTool({
   },
 });
 
-const getAttributeTool = createWooTool({
+export const getAttributeTool = createWooTool({
   name: 'wc.v3.products_attributes_read',
   description: 'Прочитать один атрибут по ID.',
   requiresApproval: false,
@@ -52,7 +52,7 @@ const getAttributeTool = createWooTool({
   },
 });
 
-const createAttributeTool = createWooTool({
+export const createAttributeTool = createWooTool({
   name: 'wc.v3.products_attributes_create',
   description: 'Создать глобальный атрибут товаров. Обязательно: name (название атрибута).',
   requiresApproval: true,
@@ -66,7 +66,7 @@ const createAttributeTool = createWooTool({
   },
 });
 
-const updateAttributeTool = createWooTool({
+export const updateAttributeTool = createWooTool({
   name: 'wc.v3.products_attributes_update',
   description: 'Обновить глобальный атрибут по ID. Передай только изменяемые поля.',
   requiresApproval: true,
@@ -86,7 +86,7 @@ const updateAttributeTool = createWooTool({
   },
 });
 
-const deleteAttributeTool = createWooTool({
+export const deleteAttributeTool = createWooTool({
   name: 'wc.v3.products_attributes_delete',
   description: 'Удалить глобальный атрибут по ID.',
   requiresApproval: true,
@@ -103,7 +103,7 @@ const deleteAttributeTool = createWooTool({
   },
 });
 
-const listAttributeTermsTool = createWooTool({
+export const listAttributeTermsTool = createWooTool({
   name: 'wc.v3.products_attributes_terms_list',
   description:
     'Получить список значений (терминов) атрибута по attribute_id. Опционально: страница, per_page, поиск по названию термина (search). Ответ: { items, count, total?, total_pages?, page?, per_page? }.',
@@ -134,7 +134,7 @@ const listAttributeTermsTool = createWooTool({
   },
 });
 
-const getAttributeTermTool = createWooTool({
+export const getAttributeTermTool = createWooTool({
   name: 'wc.v3.products_attributes_terms_read',
   description: 'Прочитать один термин атрибута по attribute_id и id термина.',
   requiresApproval: false,
@@ -150,7 +150,7 @@ const getAttributeTermTool = createWooTool({
   },
 });
 
-const createAttributeTermTool = createWooTool({
+export const createAttributeTermTool = createWooTool({
   name: 'wc.v3.products_attributes_terms_create',
   description: 'Создать значение (термин) атрибута. Обязательно: attribute_id, name (значение).',
   requiresApproval: true,
@@ -168,7 +168,7 @@ const createAttributeTermTool = createWooTool({
   },
 });
 
-const updateAttributeTermTool = createWooTool({
+export const updateAttributeTermTool = createWooTool({
   name: 'wc.v3.products_attributes_terms_update',
   description: 'Обновить термин атрибута по attribute_id и id. Передай только изменяемые поля.',
   requiresApproval: true,
@@ -191,7 +191,7 @@ const updateAttributeTermTool = createWooTool({
   },
 });
 
-const deleteAttributeTermTool = createWooTool({
+export const deleteAttributeTermTool = createWooTool({
   name: 'wc.v3.products_attributes_terms_delete',
   description: 'Удалить термин атрибута по attribute_id и id.',
   requiresApproval: true,
@@ -220,4 +220,4 @@ export const attributeWorkerWooTools = [
   createAttributeTermTool,
   updateAttributeTermTool,
   deleteAttributeTermTool,
-];
+] as const;

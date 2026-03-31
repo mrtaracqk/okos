@@ -17,7 +17,7 @@ const mapCategory = (item: ProductsCategoriesListResponse[number]) => ({
   slug: item.slug,
 });
 
-const listCategoriesTool = createWooTool({
+export const listCategoriesTool = createWooTool({
   name: 'wc.v3.products_categories_list',
   description:
     'Получить список категорий. Поиск по названию (search) и/или по родителю (parent). Ответ: { items, count, total?, total_pages?, per_page }.',
@@ -43,7 +43,7 @@ const listCategoriesTool = createWooTool({
   },
 });
 
-const getCategoryTool = createWooTool({
+export const getCategoryTool = createWooTool({
   name: 'wc.v3.products_categories_read',
   description: 'Прочитать одну категорию по ID.',
   requiresApproval: false,
@@ -56,7 +56,7 @@ const getCategoryTool = createWooTool({
   },
 });
 
-const createCategoryTool = createWooTool({
+export const createCategoryTool = createWooTool({
   name: 'wc.v3.products_categories_create',
   description: 'Создать категорию. Обязательно: name. Опционально: parent (ID родительской категории для подкатегории).',
   requiresApproval: true,
@@ -74,7 +74,7 @@ const createCategoryTool = createWooTool({
   },
 });
 
-const updateCategoryTool = createWooTool({
+export const updateCategoryTool = createWooTool({
   name: 'wc.v3.products_categories_update',
   description: 'Обновить категорию по ID. Передай только изменяемые поля.',
   requiresApproval: true,
@@ -98,7 +98,7 @@ const updateCategoryTool = createWooTool({
   },
 });
 
-const deleteCategoryTool = createWooTool({
+export const deleteCategoryTool = createWooTool({
   name: 'wc.v3.products_categories_delete',
   description: 'Удалить категорию по ID. Опционально: force=true для постоянного удаления.',
   requiresApproval: true,
@@ -121,4 +121,4 @@ export const categoryWorkerWooTools = [
   createCategoryTool,
   updateCategoryTool,
   deleteCategoryTool,
-];
+] as const;
