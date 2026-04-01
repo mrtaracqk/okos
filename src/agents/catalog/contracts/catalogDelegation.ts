@@ -37,7 +37,21 @@ export function buildCatalogDelegationResultFromCatalogState(
 ): CatalogDelegationResult {
   const summary = input.summary.trim() || 'Catalog-agent завершил работу без текстового ответа.';
   const { workerRuns } = input;
+  if (input.finalizeOutcome === 'completed') {
+    return {
+      status: 'success',
+      summary,
+    };
+  }
+
   if (input.finalizeOutcome === 'failed') {
+    return {
+      status: 'failed',
+      summary,
+    };
+  }
+
+  if (input.finalizeOutcome === 'abandoned') {
     return {
       status: 'failed',
       summary,

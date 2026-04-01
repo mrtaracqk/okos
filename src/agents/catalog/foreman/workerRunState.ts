@@ -1,5 +1,4 @@
 import { type ToolRun } from '../../shared/toolLoopGraph';
-import { type CatalogWorkerId } from '../contracts/catalogWorkerId';
 import { type WorkerRun } from '../contracts/workerRun';
 import { WORKER_RESULT_TOOL_NAME, type WorkerResultStatus } from '../contracts/workerResult';
 
@@ -24,34 +23,10 @@ export function getLastFailedWorker(workerRuns: WorkerRun[]) {
   return undefined;
 }
 
-export function buildNoToolCallFailure(workerId: CatalogWorkerId, task: string): ToolRun {
-  return {
-    toolName: '(no tool call)',
-    args: {
-      worker: workerId,
-      task,
-    },
-    status: 'failed',
-    structured: null,
-    error: {
-      source: 'catalog-worker',
-      type: 'no_tool_calls',
-      message:
-        'Воркер завершился без вызова какого-либо инструмента WooCommerce. Этот сбой был сформирован на уровне агента до любого запроса в MAG или Woo.',
-      retryable: false,
-    },
-  };
-}
-
 export function resolveWorkerRunStatus(
   toolRuns: ToolRun[],
-  hasNoToolCallFailure: boolean,
   reportedStatus?: WorkerResultStatus | null
 ): WorkerRun['status'] {
-  if (hasNoToolCallFailure) {
-    return 'failed';
-  }
-
   if (reportedStatus) {
     return reportedStatus;
   }

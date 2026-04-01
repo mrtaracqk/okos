@@ -217,7 +217,3 @@ export function extractWorkerResult(toolRuns: ToolRun[]) {
 
   return null;
 }
-
-export function countDomainToolRuns(toolRuns: ToolRun[]) {
-  return toolRuns.filter((toolRun) => toolRun.toolName !== WORKER_RESULT_TOOL_NAME).length;
-}

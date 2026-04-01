@@ -98,39 +98,6 @@ function safeSerialize(value: unknown): string | null {
   }
 }
 
-function normalizeToolContentValue(value: unknown): string | null {
-  if (!Array.isArray(value) || value.length === 0) {
-    return null;
-  }
-
-  if (value.length !== 1) {
-    return safeSerialize(value);
-  }
-
-  const [item] = value;
-  if (!isRecord(item) || typeof item.type !== 'string') {
-    return safeSerialize(value);
-  }
-
-  if (item.type === 'text' && typeof item.text === 'string') {
-    return item.text.trim();
-  }
-
-  if (item.type === 'resource' && isRecord(item.resource)) {
-    return safeSerialize(item.resource);
-  }
-
-  if (
-    item.type === 'resource_link' &&
-    typeof item.name === 'string' &&
-    typeof item.uri === 'string'
-  ) {
-    return `${item.name}: ${item.uri}`.trim();
-  }
-
-  return safeSerialize(value);
-}
-
 function serializeToolPayload(value: unknown): string {
   if (typeof value === 'string') {
     return value;

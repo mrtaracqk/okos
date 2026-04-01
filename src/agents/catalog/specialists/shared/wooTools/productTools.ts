@@ -105,7 +105,7 @@ const toProductSummary = (product: any) => {
 
 export const listProductsTool = createWooTool({
   name: 'wc.v3.products_list',
-  description: 'Список товаров (пагинация, поиск, фильтр по category id).',
+  description: 'Список товаров (пагинация, поиск, фильтр по category id)',
   requiresApproval: false,
   schema: z.object({
     page: z.coerce.number().int().min(1).max(5).optional(),

@@ -11,20 +11,32 @@ function renderAllowedTools(toolNames: string[]) {
   return toolNames.map((toolName) => `- ${toolName}`).join('\n');
 }
 
+function renderRuleSection(title: string, rules: string[]) {
+  if (rules.length === 0) {
+    return '';
+  }
+
+  return `## ${title}
+
+${rules.map((rule) => `- ${rule}`).join('\n')}
+`;
+}
+
 function renderCatalogWorkerPrompt(params: {
   workerName: string;
   toolNames: string[];
-  domainRules?: string[];
+  ownershipRules?: string[];
+  lookupRules?: string[];
+  blockerRules?: string[];
 }) {
-  const { workerName, toolNames, domainRules = [] } = params;
-  const domainRulesSection =
-    domainRules.length > 0
-      ? `
-## Доменные правила
-
-${domainRules.map((rule) => `- ${rule}`).join('\n')}
-`
-      : '';
+  const { workerName, toolNames, ownershipRules = [], lookupRules = [], blockerRules = [] } = params;
+  const knowledgeSections = [
+    renderRuleSection('Зона Ответственности', ownershipRules),
+    renderRuleSection('Lookup И Research', lookupRules),
+    renderRuleSection('Когда Вернуть Blocker Или Failed', blockerRules),
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   return `**Дата и время:** ${formatLocaleDateTime(new Date())}
 
@@ -45,11 +57,13 @@ ${domainRules.map((rule) => `- ${rule}`).join('\n')}
 ## Как работать
 
 - Следуй \`objective\` и \`expectedOutput\` буквально. Не рассуждай вслух и не веди лог в тексте — следующий ход: либо минимальный вызов инструмента под \`objective\`, либо (см. ниже) сразу \`report_worker_result\`.
+- Рабочий порядок: 1) если входа уже достаточно, выполняй свой шаг; 2) если не хватает только подтверждения id/сущности, делай минимальный lookup в разрешённых read/list; 3) если дальше нужна чужая mutation или подтверждения всё ещё недостаточно, сразу заверши шаг через \`report_worker_result\`.
 - Owner шага определяется по **итоговому действию** или **итоговому domain fact**, а не по самому факту наличия соседнего lookup/read/list.
 - Если для своего шага тебе хватает разрешённого lookup/read/list, используй его как подготовку и оставайся owner-ом этого шага.
+- Lookup не раскрывай в отдельный workflow по созданию taxonomy, категорий, parent product или variation.
 - Если lookup показал, что дальше нужна **чужая mutation** или подготовка чужой сущности, не продолжай чужой сценарий: верни blocker.
 - Если шаг вообще не относится к твоей зоне ответственности, сам его не выполняй: верни blocker с нужным owner.
-- Не выдумывай данные (ID, SKU, связи). При сомнениях — ограниченно read/list, чтобы снять неоднозначность id/SKU, без зацикливания.
+- Не выдумывай данные (ID, SKU, связи). При сомнениях — ограниченно read/list, чтобы снять неоднозначность id/SKU; если после 1-2 точечных lookup неопределённость не снята, не зацикливайся.
 - ${CATALOG_CURRENCY_PROMPT}
 - Только назначенные инструменты. **Факты из каталога** (цены, SKU, id, сущности) — только из **payload** после вызова; не догадки.
 - **Консультация бригадиру:** catalog-agent может прислать узкий шаг с вопросом о принципах, границах зоны или твоих возможностях (не с пользователем). Ответь по сути: что умеешь, какие тулы, типовой порядок. Если факты из Woo не нужны — \`report_worker_result\` с \`completed\` и \`data\` (текст ответа), **без обязательных вызовов инструментов**. Пример: «кратко: когда звать variation-worker и чем он отличается от product-worker» → \`completed\`, \`data\` с объяснением, тулы не вызываешь.
@@ -67,7 +81,7 @@ ${domainRules.map((rule) => `- ${rule}`).join('\n')}
 - \`missingData\` — только реально недостающие данные или prerequisite, без советов
 - \`note\` / \`blocker.reason\` — коротко и фактически, без рекомендаций и без нового плана
 
-${domainRulesSection}
+${knowledgeSections}
 
 ## Разрешённые инструменты
 
@@ -139,13 +153,22 @@ export const PROMPTS = {
 - Для create/update товара или variation сначала планируй owner-а этого конечного действия, даже если на входе пока только names, partial facts или неразрешённые id.
 - Если worker вернул blocker на чужую mutation или wrong_owner, это сигнал пересобрать план по нужному owner-у, а не заставлять текущего worker-а продолжать чужую зону.
 
+### Неточные пользовательские формулировки
+
+Пользователь часто формулирует запрос по-человечески: без id, с неполными или неточными названиями, не зная технических особенностей. Считай это нормой и сам выясняй нужные сущности по контексту и через доступные lookup/read.
+
+Короткие примеры:
+- Пользователь прислал ссылку на товар вместо id → используй ссылку как вход для поиска нужной сущности.
+- Пользователь написал неточный термин или бытовое название сущности → выясни, что он имеет в виду, по контексту каталога и доступным lookup/read. 
+- Пользователь спросил сколько стоит товар, но не уточнил вариацию → выясни минимальную цену или все цены (если их немного). 
+
 #### Консультации и сводки возможностей
 
 Вопросы **о процессе, принципах и возможностях** (как устроено, что в чьей зоне, сводка «что умеет менеджер каталога» / воркеры) — нормальны. Ты не только исполняешь шаги по данным, но и **консультируешь** по границам каталога.
 
 - Опирайся на **свои знания**, **схему каталога** ниже и при необходимости **playbook** (\`inspect_catalog_playbook\`).
-- В ответе опирайся на твои возможности и возможности команды
-- Не отсылый к админке сайта! Ты и команда многое умее! Исключения - если пользователь явно спрашивает про сайт и если ты точно знаешь, что вы такое не умеете.
+- В ответе опирайся на свои возможности и возможности команды.
+- Не отправляй пользователя в админку сайта по умолчанию. Исключения: пользователь явно спрашивает именно про сайт или ты точно знаешь, что команда это не умеет.
 - Нужна деталь по **чужому** домену — один узкий шаг соответствующему **воркеру** (консультация: «объясни границы / возможности / порядок в твоей зоне»), затем собери итог в \`summary\`.
 - Если хватает тебя и playbook — \`finish_execution_plan\` с \`summary\`, без лишнего плана воркеров.
 - Не завершай план с \`failed\` или отказом только потому, что пользователь спросил «что вы умеете», а не дал сущность в каталоге.
@@ -238,6 +261,7 @@ ${CATALOG_WORKER_IDS.map((id) => `- ${id}`).join('\n')}
 ## Итог (\`finish_execution_plan.summary\`)
 
 Сформулируй ответ пользователю целиком в \`summary\` (это финальная выдача по задаче): 
+- Можно понять без обращения к админке и базе данных: запрещены "голые" id и другие технические данные.
 - Цены, SKU, id и остальные факты переноси из результатов воркеров **без изменений** — не округляй, не переформулируй значения. 
 - Не дублируй служебные обороты вроде «Готово:» в тексте — только содержание. 
 - Стиль — коротко и по делу, без JSON/YAML, без ключей status/data/missingData/note, без пошагового лога и внутренней механики. 
@@ -254,7 +278,9 @@ ${CATALOG_WORKER_IDS.map((id) => `- ${id}`).join('\n')}
       return renderCatalogWorkerPrompt({
         workerName: k.id,
         toolNames,
-        domainRules: [...k.domainRules],
+        ownershipRules: [...k.ownershipRules],
+        lookupRules: [...k.lookupRules],
+        blockerRules: [...k.blockerRules],
       });
     },
     ATTRIBUTE: (toolNames: string[]) => {
@@ -262,7 +288,9 @@ ${CATALOG_WORKER_IDS.map((id) => `- ${id}`).join('\n')}
       return renderCatalogWorkerPrompt({
         workerName: k.id,
         toolNames,
-        domainRules: [...k.domainRules],
+        ownershipRules: [...k.ownershipRules],
+        lookupRules: [...k.lookupRules],
+        blockerRules: [...k.blockerRules],
       });
     },
     PRODUCT: (toolNames: string[]) => {
@@ -270,7 +298,9 @@ ${CATALOG_WORKER_IDS.map((id) => `- ${id}`).join('\n')}
       return renderCatalogWorkerPrompt({
         workerName: k.id,
         toolNames,
-        domainRules: [...k.domainRules],
+        ownershipRules: [...k.ownershipRules],
+        lookupRules: [...k.lookupRules],
+        blockerRules: [...k.blockerRules],
       });
     },
     VARIATION: (toolNames: string[]) => {
@@ -278,7 +308,9 @@ ${CATALOG_WORKER_IDS.map((id) => `- ${id}`).join('\n')}
       return renderCatalogWorkerPrompt({
         workerName: k.id,
         toolNames,
-        domainRules: [...k.domainRules],
+        ownershipRules: [...k.ownershipRules],
+        lookupRules: [...k.lookupRules],
+        blockerRules: [...k.blockerRules],
       });
     },
   },

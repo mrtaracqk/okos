@@ -16,7 +16,6 @@ import {
 } from '../../../runtime/planning';
 import { buildWorkerInputFromEnvelope, type WorkerTaskEnvelope } from '../contracts/workerRequest';
 import {
-  countDomainToolRuns,
   extractWorkerResult,
   renderWorkerResult,
   renderWorkerResultEnvelopeSummary,
@@ -34,7 +33,6 @@ import {
   newExecutionPlanTool,
 } from './executionTools';
 import {
-  buildNoToolCallFailure,
   formatWorkerFailure,
   getLastNonReportFailure,
   resolveWorkerRunStatus,
@@ -181,19 +179,9 @@ async function executeWorkerHandoff(
         const workerResult = extractWorkerResult(rawWorkerToolRuns);
         const runResult =
           result.finalResult != null ? result.finalResult : (workerResult ? workerResultToEnvelope(workerResult) : undefined);
-        const domainToolRunCount = countDomainToolRuns(rawWorkerToolRuns);
-        const synthesizedFailure =
-          domainToolRunCount === 0 &&
-          (!runResult || runResult.status === 'completed')
-            ? buildNoToolCallFailure(workerId, objective)
-            : undefined;
-        const workerToolRuns = synthesizedFailure ? [...rawWorkerToolRuns, synthesizedFailure] : rawWorkerToolRuns;
+        const workerToolRuns = rawWorkerToolRuns;
         const workerFailure = getLastNonReportFailure(workerToolRuns);
-        const runStatus = resolveWorkerRunStatus(
-          workerToolRuns,
-          Boolean(synthesizedFailure),
-          runResult?.status ?? workerResult?.status
-        );
+        const runStatus = resolveWorkerRunStatus(workerToolRuns, runResult?.status ?? workerResult?.status);
         const runStatusFinal =
           runResult === undefined && runStatus === 'completed' ? 'failed' : runStatus;
         const detailsForTrace =

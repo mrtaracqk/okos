@@ -25,16 +25,18 @@ export const listCategoriesTool = createWooTool({
   schema: z.object({
     search: z.string().optional().describe('Поиск по названию категории.'),
     parent: z.number().int().optional().describe('ID родительской категории (для подкатегорий).'),
+    page: z.coerce.number().int().min(1).max(5).optional(),
+    per_page: z.coerce.number().int().min(1).max(20).optional(),
   }),
   run: async (input) => {
-    const per_page = 100;
     const { data, headers } = await getWooExecuteWithHeaders()({
       method: 'GET',
       routeTemplate: '/products/categories',
       query: {
         search: input.search,
         parent: input.parent,
-        per_page,
+        page: input.page ?? 1,
+        per_page: input.per_page ?? 20,
       },
     });
     const list = Array.isArray(data) ? data : [];

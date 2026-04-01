@@ -19,7 +19,7 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 ### Обязательные
 
 - Название товара — строка, будет использовано как name
-- Категория — название категории; при необходимости указать родительскую. Если не указана, category-worker подберёт или создаст подходящую на основе названия товара
+- Категория — название категории; при необходимости указать родительскую
 
 ### Опциональные
 
@@ -59,6 +59,10 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 - blocker.owner = category-worker
 - blocker.kind = external_mutation_required
 - причина, какая категория или parent prerequisite отсутствует
+
+Если после минимального lookup остаётся несколько кандидатов категории и точный выбор не подтверждается, шаг не продолжается вслепую:
+- вернуть failed
+- missingData с указанием, какой category context нужно уточнить
 
 Критичность: высокая. Если не удалось, остановить процесс.
 
@@ -128,7 +132,7 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 
 ### Опциональные
 
-- Категория — название категории; при необходимости указать родительскую. Если не указана, category-worker подберёт или создаст подходящую на основе названия товара.
+- Категория — название категории; при необходимости указать родительскую. Если не указана, товар можно создать без привязки категории.
 - Краткое описание — текст для short_description.
 
 ## Принцип routing
@@ -170,6 +174,10 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 - blocker.owner = category-worker или attribute-worker
 - blocker.kind = external_mutation_required
 - причина, какой prerequisite отсутствует
+
+Если после минимального lookup нельзя надёжно выбрать категорию, атрибут или term, шаг не продолжается вслепую:
+- вернуть failed
+- missingData с указанием, какой taxonomy/category context нужно уточнить
 
 Критичность: высокая. Если хотя бы один атрибут не удалось подготовить, остановить процесс.
 
@@ -236,6 +244,114 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 - category_id
 - список атрибутов с термами
 - variation_ids и count
+- что создано
+- что не удалось`,
+  },
+  {
+    id: 'add-product-variation',
+    summary: 'Создать конкретную variation у существующего variable товара по owner-first схеме.',
+    workerOrder: ['variation-worker', 'product-worker / attribute-worker (fallback)', 'variation-worker (retry)'],
+    instructions: `# Создание конкретной вариации
+
+Пошаговая процедура для создания одной variation у существующего variable product по owner-first схеме.
+
+## Вводные
+
+### Обязательные
+
+- Контекст родительского товара — product_id или название товара.
+- Хотя бы один атрибут variation с конкретным значением.
+
+### Опциональные
+
+- SKU
+- regular_price
+- sale_price
+- status
+- description
+
+## Принцип routing
+
+- Owner конечного действия — variation-worker: именно он создаёт variation.
+- variation-worker сам пытается разрешить product_id родителя и taxonomy context атрибутов через свои research tools.
+- product-worker подключается только если lookup variation-worker показал, что нужно подготовить или исправить сам родительский variable product.
+- attribute-worker подключается только если lookup variation-worker показал, что нужного глобального attribute или term-а ещё нет и нужна отдельная mutation.
+
+## Шаги
+
+### 1. Создание variation и lookup контекста -> variation-worker
+
+Выполняется первым.
+
+Задание worker-у:
+- Подтвердить родительский variable product по product_id или по названию через product lookup.
+- Подтвердить attribute_id и term context для всех атрибутов variation через research tools.
+- Если всё подтверждено, создать variation.
+- Если lookup показал, что родитель не найден, не является variable или на родителе нужно сначала подготовить product-level attributes, вернуть blocker на product-worker.
+- Если lookup показал, что глобального attribute или term-а не существует, вернуть blocker на attribute-worker.
+
+Вход:
+- product_id или название родительского товара
+- attributes = [{ attribute name, option }]
+- sku, regular_price, sale_price, status, description — если даны
+
+Ожидаемый результат при успехе:
+- product_id
+- variation_id
+- attributes в формате variation context
+- sku / regular_price / sale_price, если задавались
+
+Ожидаемый результат при blocker:
+- blocker.owner = product-worker или attribute-worker
+- blocker.kind = external_mutation_required
+- причина, какой parent-level prerequisite или taxonomy отсутствует
+
+Если после минимального lookup нельзя надёжно подтвердить родителя или attribute context, шаг не продолжается вслепую:
+- вернуть failed
+- missingData с указанием, какой parent / attribute context нужно уточнить
+
+Критичность: высокая. Если не удалось, остановить процесс.
+
+### 2. Подготовка внешнего prerequisite -> product-worker или attribute-worker
+
+Выполняется только если шаг 1 вернул blocker.
+
+Задание worker-у:
+- Если blocker.owner = product-worker, подготовить нужный variable parent для variation-owned шага: при необходимости создать или обновить product-level attributes на родителе, либо исправить parent-level состояние, которое мешает создать variation.
+- Если blocker.owner = attribute-worker, найти глобальный атрибут, проверить значения и создать отсутствующие term-ы или сам атрибут.
+- Если после первого fallback всё ещё нужен второй внешний prerequisite, перестрой план ещё раз и добавь только реально нужный шаг.
+
+Ожидаемый результат:
+- product_id и подтверждение подготовленного parent-level состояния или
+- attribute_id, attribute_name и terms
+
+Критичность: высокая. Если prerequisite не удалось подготовить, остановить процесс.
+
+### 3. Повторное создание variation -> variation-worker
+
+Выполняется только после успешной подготовки всех prerequisite-сущностей.
+
+Задание worker-у:
+- Повторить создание variation уже с подтверждённым product_id и taxonomy context.
+
+Вход:
+- product_id
+- attributes в формате WooCommerce variation attributes: [{ id, option }]
+- sku, regular_price, sale_price, status, description — если даны
+
+Ожидаемый результат:
+- variation_id
+- product_id
+- attributes
+
+Критичность: высокая. Если не удалось, остановить процесс целиком.
+
+## Итог
+
+Вернуть структурированный результат:
+- product_id
+- variation_id
+- attributes
 - что создано
 - что не удалось`,
   }

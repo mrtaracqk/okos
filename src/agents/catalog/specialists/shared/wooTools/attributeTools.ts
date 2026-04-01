@@ -14,12 +14,12 @@ import type {
 export const listAttributesTool = createWooTool({
   name: 'wc.v3.products_attributes_list',
   description:
-    'Получить список глобальных атрибутов товаров с опциональной фильтрацией: страница, per_page, поиск по названию (search). Ответ: { items, count, total?, total_pages?, page?, per_page? }.',
+    'Получить список глобальных атрибутов товаров. Обязательно: per_page и search; опционально: страница. Ответ: { items, count, total?, total_pages?, page?, per_page? }.',
   requiresApproval: false,
   schema: z.object({
     page: z.coerce.number().int().min(1).max(5).optional(),
     per_page: z.coerce.number().int().min(1).max(20),
-    search: z.string().describe('Поиск (всегда) по названию атрибута (REST query search).')
+    search: z.string().describe('Поиск по названию атрибута (REST query search).'),
   }),
   run: async (input) => {
     const page = input.page ?? 1;
@@ -92,12 +92,10 @@ export const deleteAttributeTool = createWooTool({
   requiresApproval: true,
   schema: z.object({
     id: z.coerce.number().int().min(1),
-    force: z.boolean().optional(),
   }),
   run: async (input, { client }) => {
     await client.products.deleteProductsAttribute({
-      path: { id: input.id },
-      query: input.force != null ? { force: input.force } : undefined,
+      path: { id: input.id }
     });
     return buildToolSuccess(null);
   },
@@ -106,7 +104,7 @@ export const deleteAttributeTool = createWooTool({
 export const listAttributeTermsTool = createWooTool({
   name: 'wc.v3.products_attributes_terms_list',
   description:
-    'Получить список значений (терминов) атрибута по attribute_id. Опционально: страница, per_page, поиск по названию термина (search). Ответ: { items, count, total?, total_pages?, page?, per_page? }.',
+    'Получить список значений (терминов) атрибута по attribute_id. Обязательно: per_page и search; опционально: страница. Ответ: { items, count, total?, total_pages?, page?, per_page? }.',
   requiresApproval: false,
   schema: z.object({
     attribute_id: z.coerce.number().int().min(1).describe('ID атрибута.'),
@@ -197,13 +195,11 @@ export const deleteAttributeTermTool = createWooTool({
   requiresApproval: true,
   schema: z.object({
     attribute_id: z.coerce.number().int().min(1),
-    id: z.coerce.number().int().min(1),
-    force: z.boolean().optional(),
+    id: z.coerce.number().int().min(1)
   }),
   run: async (input, { client }) => {
     await client.products.deleteProductsAttributeTerm({
       path: { attribute_id: input.attribute_id, id: input.id },
-      query: input.force != null ? { force: input.force } : undefined,
     });
     return buildToolSuccess(null);
   },

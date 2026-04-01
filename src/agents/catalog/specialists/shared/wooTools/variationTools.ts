@@ -59,7 +59,7 @@ export const getVariationTool = createWooTool({
 export const createVariationTool = createWooTool({
   name: 'wc.v3.products_variations_create',
   description:
-    'Создать вариацию товара. Обязательно: product_id. Опционально: sku, regular_price, sale_price, stock_quantity, attributes (элементы: id атрибута из wc.v3.products_attributes_list, option — значение), status и др.',
+    'Создать вариацию у уже подтверждённого variable product. Обязательно: product_id. Вызывай, когда parent product и taxonomy context уже подтверждены; если для продолжения сначала нужно подготовить родителя или глобальный attribute / term, это не этот tool. Опционально: sku, regular_price, sale_price, stock_quantity, attributes (элементы: id глобального атрибута, option — значение), status и др.',
   requiresApproval: true,
   schema: z.object({
     product_id: z.coerce.number().int().min(1),
@@ -100,7 +100,7 @@ export const createVariationTool = createWooTool({
 export const updateVariationTool = createWooTool({
   name: 'wc.v3.products_variations_update',
   description:
-    'Обновить вариацию по product_id и id. Передай только изменяемые поля. attributes: { id, option } — id глобального атрибута, без name.',
+    'Обновить существующую вариацию по product_id и id. Передай только изменяемые поля. Используй, когда parent product, variation id и attribute context уже подтверждены; подготовка родителя или taxonomy делается не этим tool. attributes: { id, option } — id глобального атрибута, без name.',
   requiresApproval: true,
   schema: z.object({
     product_id: z.coerce.number().int().min(1),
@@ -160,7 +160,7 @@ export const deleteVariationTool = createWooTool({
 export const batchVariationsTool = createWooTool({
   name: 'wc.v3.products_variations_batch',
   description:
-    'Пакетное создание/обновление/удаление вариаций товара. product_id обязательно. body: create (массив объектов вариаций), delete (массив id), update (массив { id, ...поля }).',
+    'Пакетное создание/обновление/удаление вариаций внутри уже подтверждённого variable product. product_id обязательно. Используй только когда parent product и нужный taxonomy context уже подготовлены. body: create (массив объектов вариаций), delete (массив id), update (массив { id, ...поля }).',
   requiresApproval: true,
   schema: z.object({
     product_id: z.coerce.number().int().min(1),
@@ -184,7 +184,8 @@ export const batchVariationsTool = createWooTool({
 
 export const generateVariationsTool = createWooTool({
   name: 'wc.v3.products_variations_generate_create',
-  description: 'Сгенерировать все вариации товара по комбинациям его атрибутов. Обязательно: product_id.',
+  description:
+    'Сгенерировать все вариации у уже подготовленного variable product по комбинациям его product-level attributes. Обязательно: product_id. Вызывай только когда родитель уже в корректном состоянии для генерации; создание или исправление parent-level attributes и taxonomy делается не этим tool.',
   requiresApproval: true,
   schema: z.object({
     product_id: z.coerce.number().int().min(1).describe('ID вариативного товара.'),
