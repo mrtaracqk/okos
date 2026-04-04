@@ -4,8 +4,6 @@ import { type RuntimePlan } from '../../../runtime/planning/types';
 import { toJsonSafeValue } from '../../shared/jsonSafe';
 import { type WorkerRun } from '../contracts/workerRun';
 
-export const CATALOG_EXECUTION_PROTOCOL = 'catalog_execution_v2';
-
 export const EXECUTION_RESULT_REASON_CODES = [
   'ready_for_next_pending_step',
   'worker_blocker_requires_plan_rebuild',
@@ -19,11 +17,8 @@ export type ExecutionResultPhase = 'new_execution_plan' | 'approve_step';
 export type ExecutionPlanEvent = 'created' | 'replaced' | 'advanced';
 
 export type CatalogExecutionResult = {
-  protocol: typeof CATALOG_EXECUTION_PROTOCOL;
   phase: ExecutionResultPhase;
   executionSessionId: string;
-  revision: number;
-  plan_event: ExecutionPlanEvent;
   plan: {
     status: 'active' | 'completed' | 'failed';
     tasks: Array<{
@@ -33,17 +28,30 @@ export type CatalogExecutionResult = {
       status: string;
     }>;
   };
-  completed_task: {
+  plan_update: null | {
+    type: 'created' | 'replaced';
+    summary: string;
+  };
+  completed_step: {
     taskId: string;
+    title: string;
     owner: string;
     status: WorkerRun['status'];
+    summary: string;
+    highlights: string[];
+    worker_result: WorkerRun['result'] | null;
+    protocol_error?: WorkerRun['protocolError'];
   };
-  worker_result_raw: WorkerRun['result'] | null;
-  protocol_error?: WorkerRun['protocolError'];
-  next_action: {
+  next_step: {
     tool: ExecutionResultNextTool;
     reason_code: ExecutionResultReasonCode;
-    instruction: string;
+    task: null | {
+      taskId: string;
+      title: string;
+      owner: string;
+      status: string;
+    };
+    summary: string;
   };
 };
 
@@ -59,13 +67,76 @@ function getPlanStatus(plan: RuntimePlan): CatalogExecutionResult['plan']['statu
   return 'active';
 }
 
-function getNextAction(run: WorkerRun, plan: RuntimePlan): CatalogExecutionResult['next_action'] {
+function getCompletedStepSummary(taskTitle: string, run: WorkerRun): string {
+  if (run.protocolError && !run.result) {
+    return `Шаг "${taskTitle}" завершился с protocol error.`;
+  }
+
+  if (run.status === 'failed' || run.status === 'invalid') {
+    return `Шаг "${taskTitle}" завершился ошибкой.`;
+  }
+
+  return `Шаг "${taskTitle}" завершён.`;
+}
+
+function getCompletedStepHighlights(taskTitle: string, run: WorkerRun): string[] {
+  const result = run.result;
+  if (!result) {
+    return run.protocolError ? [run.protocolError.message] : [];
+  }
+
+  const highlights: string[] = [];
+  const normalizedResultSummary = result.summary?.trim() ?? '';
+  const normalizedNote = result.note?.trim() ?? '';
+
+  if (normalizedResultSummary) {
+    highlights.push(normalizedResultSummary);
+  }
+
+  highlights.push(...result.data);
+
+  if (result.missingData.length > 0) {
+    highlights.push(`Недостающие данные: ${result.missingData.join(', ')}`);
+  }
+
+  if (result.blocker) {
+    highlights.push(`Blocker: ${result.blocker.kind} -> ${result.blocker.owner}: ${result.blocker.reason}`);
+  }
+
+  if (normalizedNote && normalizedNote !== normalizedResultSummary) {
+    highlights.push(normalizedNote);
+  }
+
+  return highlights;
+}
+
+function getPlanUpdate(
+  phase: ExecutionResultPhase,
+  planEvent: ExecutionPlanEvent
+): CatalogExecutionResult['plan_update'] {
+  if (phase !== 'new_execution_plan') {
+    return null;
+  }
+
+  if (planEvent === 'created') {
+    return { type: 'created', summary: 'План создан.' };
+  }
+
+  if (planEvent === 'replaced') {
+    return { type: 'replaced', summary: 'План заменён.' };
+  }
+
+  return null;
+}
+
+function getNextStep(run: WorkerRun, plan: RuntimePlan): CatalogExecutionResult['next_step'] {
   const nextPendingTask = plan.tasks.find((task) => task.status === 'pending');
   if (!nextPendingTask) {
     return {
       tool: 'finish_execution_plan',
       reason_code: 'plan_has_no_pending_steps',
-      instruction: 'Call finish_execution_plan unless you intentionally replace the plan.',
+      task: null,
+      summary: 'Следующий шаг: завершить выполнение через finish_execution_plan.',
     };
   }
 
@@ -73,7 +144,8 @@ function getNextAction(run: WorkerRun, plan: RuntimePlan): CatalogExecutionResul
     return {
       tool: 'new_execution_plan',
       reason_code: 'worker_blocker_requires_plan_rebuild',
-      instruction: 'Do not call approve_step. Replace the plan before the next worker handoff.',
+      task: null,
+      summary: 'Следующий шаг: пересобрать план через new_execution_plan.',
     };
   }
 
@@ -81,14 +153,21 @@ function getNextAction(run: WorkerRun, plan: RuntimePlan): CatalogExecutionResul
     return {
       tool: 'approve_step',
       reason_code: 'ready_for_next_pending_step',
-      instruction: 'Call approve_step next.',
+      task: {
+        taskId: nextPendingTask.taskId,
+        title: nextPendingTask.title,
+        owner: nextPendingTask.owner,
+        status: nextPendingTask.status,
+      },
+      summary: `Следующий шаг: выполнить "${nextPendingTask.title}" через approve_step.`,
     };
   }
 
   return {
     tool: 'new_execution_plan',
     reason_code: 'failed_run_requires_plan_rebuild',
-    instruction: 'Do not call approve_step. Rebuild the plan or finish the execution.',
+    task: null,
+    summary: 'Следующий шаг: пересобрать план через new_execution_plan.',
   };
 }
 
@@ -99,20 +178,17 @@ export function createExecutionSessionId() {
 export function buildExecutionResult(params: {
   phase: ExecutionResultPhase;
   executionSessionId: string;
-  revision: number;
   planEvent: ExecutionPlanEvent;
   plan: RuntimePlan;
   run: WorkerRun;
   completedTaskId: string;
 }): CatalogExecutionResult {
   const completedTask = params.plan.tasks.find((task) => task.taskId === params.completedTaskId);
+  const completedTaskTitle = completedTask?.title ?? params.run.task;
 
   return {
-    protocol: CATALOG_EXECUTION_PROTOCOL,
     phase: params.phase,
     executionSessionId: params.executionSessionId,
-    revision: params.revision,
-    plan_event: params.planEvent,
     plan: {
       status: getPlanStatus(params.plan),
       tasks: params.plan.tasks.map((task) => ({
@@ -122,14 +198,18 @@ export function buildExecutionResult(params: {
         status: task.status,
       })),
     },
-    completed_task: {
+    plan_update: getPlanUpdate(params.phase, params.planEvent),
+    completed_step: {
       taskId: params.completedTaskId,
+      title: completedTaskTitle,
       owner: completedTask?.owner ?? params.run.agent,
       status: params.run.status,
+      summary: getCompletedStepSummary(completedTaskTitle, params.run),
+      highlights: getCompletedStepHighlights(completedTaskTitle, params.run),
+      worker_result: params.run.result ?? null,
+      ...(params.run.protocolError ? { protocol_error: params.run.protocolError } : {}),
     },
-    worker_result_raw: params.run.result ?? null,
-    ...(params.run.protocolError ? { protocol_error: params.run.protocolError } : {}),
-    next_action: getNextAction(params.run, params.plan),
+    next_step: getNextStep(params.run, params.plan),
   };
 }
 
@@ -146,7 +226,9 @@ export function buildExecutionResultRuntimeContextMessage(result: CatalogExecuti
     [
       'Runtime execution result below is the authoritative execution state.',
       'No WORKER_RESULT or narrative follow-up message will arrive after execution tools.',
-      'Choose the next tool from `next_action.tool` and the active runtime plan only.',
+      'Use `plan_update` to see whether the plan was created or replaced.',
+      'Read `completed_step.highlights` as the result of the just-finished step.',
+      'Choose the next tool from `next_step.tool` and `next_step.task` using the active runtime plan only.',
       '```json',
       serializeExecutionResult(result),
       '```',

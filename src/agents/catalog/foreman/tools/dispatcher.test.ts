@@ -29,8 +29,8 @@ let workerInvocations: Array<{ workerId: string; payload: unknown; config: unkno
 let workerResults: Map<string, FakeWorkerResult>;
 let executionContext: { activeExecutionResult: CatalogExecutionResult | null };
 
-mock.module('../workers/registry', () => ({
-  resolveCatalogForemanWorker(workerId: string) {
+mock.module('../../specialists/registry', () => ({
+  resolveCatalogWorker(workerId: string) {
     return {
       id: workerId,
       graph: {
@@ -186,31 +186,40 @@ describe('executeCatalogToolCall', () => {
     expect(result.run?.status).toBe('completed');
     expect(result.executionResult).toEqual(payload);
     expect(result.toolMessage.additional_kwargs).toEqual(payload);
-    expect(payload.protocol).toBe('catalog_execution_v2');
     expect(payload.phase).toBe('new_execution_plan');
-    expect(payload.plan_event).toBe('created');
-    expect(payload.revision).toBe(1);
     expect(payload.executionSessionId).toBeTruthy();
     expect(payload.plan.status).toBe('active');
     expect(payload.plan.tasks.map((task) => task.status)).toEqual(['completed', 'pending']);
-    expect(payload.completed_task).toEqual({
+    expect(payload.plan_update).toEqual({
+      type: 'created',
+      summary: 'План создан.',
+    });
+    expect(payload.completed_step).toEqual({
       taskId: 'task-1',
+      title: 'Найти товар по SKU',
       owner: 'product-worker',
       status: 'completed',
+      summary: 'Шаг "Найти товар по SKU" завершён.',
+      highlights: ['Товар найден и подтвержден.', 'product_id=101', 'sku=IP-17', 'lookup done'],
+      worker_result: {
+        status: 'completed',
+        data: ['product_id=101', 'sku=IP-17'],
+        missingData: [],
+        note: 'lookup done',
+        artifacts: [{ product_id: 101, sku: 'IP-17', payload: { nested: ['a', 'b'] } }],
+        summary: 'Товар найден и подтвержден.',
+      },
     });
-    expect(payload.worker_result_raw).toEqual({
-      status: 'completed',
-      data: ['product_id=101', 'sku=IP-17'],
-      missingData: [],
-      note: 'lookup done',
-      artifacts: [{ product_id: 101, sku: 'IP-17', payload: { nested: ['a', 'b'] } }],
-      summary: 'Товар найден и подтвержден.',
-    });
-    expect(payload.worker_result_raw && 'facts' in payload.worker_result_raw).toBe(false);
-    expect(payload.next_action).toEqual({
+    expect(payload.next_step).toEqual({
       tool: 'approve_step',
       reason_code: 'ready_for_next_pending_step',
-      instruction: 'Call approve_step next.',
+      task: {
+        taskId: 'task-2',
+        title: 'Проверить вариации товара',
+        owner: 'variation-worker',
+        status: 'pending',
+      },
+      summary: 'Следующий шаг: выполнить "Проверить вариации товара" через approve_step.',
     });
     expect(workerInvocations).toHaveLength(1);
     expect(workerInvocations[0]?.payload).toEqual({
@@ -308,10 +317,13 @@ describe('executeCatalogToolCall', () => {
 
     expect(result.run?.status).toBe('completed');
     expect(payload.phase).toBe('approve_step');
-    expect(payload.plan_event).toBe('advanced');
-    expect(payload.revision).toBe(2);
+    expect(payload.plan_update).toBeNull();
     expect(payload.executionSessionId).toBe(first.executionResult?.executionSessionId ?? '');
-    expect(payload.next_action.tool).toBe('approve_step');
+    expect(payload.completed_step.title).toBe('Проверить вариации');
+    expect(payload.completed_step.highlights).toEqual(['Вариации проверены.', 'variation_id=201']);
+    expect(payload.next_step.tool).toBe('approve_step');
+    expect(payload.next_step.task?.title).toBe('Проверить категории товара');
+    expect(payload.next_step.summary).toBe('Следующий шаг: выполнить "Проверить категории товара" через approve_step.');
     expect(workerInvocations).toHaveLength(1);
     expect(workerInvocations[0]?.workerId).toBe('variation-worker');
     expect(workerInvocations[0]?.payload).toEqual({
@@ -338,7 +350,7 @@ describe('executeCatalogToolCall', () => {
     expect(activePlan?.nextStepArtifacts).toBeUndefined();
   });
 
-  test('new_execution_plan replaces the plan and returns plan_event=replaced with a new execution session', async () => {
+  test('new_execution_plan replaces the plan and returns plan_update=replaced with a new execution session', async () => {
     workerResults.set('product-worker', {
       finalResult: {
         status: 'completed',
@@ -416,8 +428,10 @@ describe('executeCatalogToolCall', () => {
     const payload = parseExecutionToolPayload(result.toolMessage.content);
 
     expect(result.run?.status).toBe('completed');
-    expect(payload.plan_event).toBe('replaced');
-    expect(payload.revision).toBe(1);
+    expect(payload.plan_update).toEqual({
+      type: 'replaced',
+      summary: 'План заменён.',
+    });
     expect(payload.executionSessionId).toBeTruthy();
     expect(payload.executionSessionId).not.toBe(first.executionResult?.executionSessionId ?? '');
     expect(workerInvocations.at(-1)?.payload).toEqual({
@@ -440,7 +454,7 @@ describe('executeCatalogToolCall', () => {
     expect(planningRuntime.getActivePlan('run-1')?.nextStepArtifacts).toBeUndefined();
   });
 
-  test('blocker result routes planner to new_execution_plan through next_action.tool', async () => {
+  test('blocker result routes planner to new_execution_plan through next_step.tool', async () => {
     workerResults.set('product-worker', {
       finalResult: {
         status: 'failed',
@@ -484,10 +498,16 @@ describe('executeCatalogToolCall', () => {
     const payload = parseExecutionToolPayload(result.toolMessage.content);
 
     expect(payload.plan.status).toBe('failed');
-    expect(payload.next_action).toEqual({
+    expect(payload.completed_step.highlights).toEqual([
+      'Нужен другой owner.',
+      'Недостающие данные: approved_category_id',
+      'Blocker: wrong_owner -> category-worker: Сначала нужен category-worker.',
+    ]);
+    expect(payload.next_step).toEqual({
       tool: 'new_execution_plan',
       reason_code: 'worker_blocker_requires_plan_rebuild',
-      instruction: 'Do not call approve_step. Replace the plan before the next worker handoff.',
+      task: null,
+      summary: 'Следующий шаг: пересобрать план через new_execution_plan.',
     });
   });
 
@@ -520,8 +540,11 @@ describe('executeCatalogToolCall', () => {
     const payload = parseExecutionToolPayload(result.toolMessage.content);
 
     expect(payload.plan.status).toBe('failed');
-    expect(payload.next_action.tool).toBe('finish_execution_plan');
-    expect(payload.next_action.reason_code).toBe('plan_has_no_pending_steps');
+    expect(payload.completed_step.highlights).toEqual(['Недостаточно данных.', 'Недостающие данные: sku']);
+    expect(payload.next_step.tool).toBe('finish_execution_plan');
+    expect(payload.next_step.reason_code).toBe('plan_has_no_pending_steps');
+    expect(payload.next_step.task).toBeNull();
+    expect(payload.next_step.summary).toBe('Следующий шаг: завершить выполнение через finish_execution_plan.');
   });
 
   test('missing report_worker_result returns a deterministic protocol error without inventing a summary', async () => {
@@ -550,13 +573,16 @@ describe('executeCatalogToolCall', () => {
     expect(result.run?.status).toBe('failed');
     expect(result.run?.errorSummary).toContain('report_worker_result');
     expect(payload.plan.status).toBe('failed');
-    expect(payload.worker_result_raw).toBeNull();
-    expect(payload.protocol_error).toEqual({
+    expect(payload.completed_step.worker_result).toBeNull();
+    expect(payload.completed_step.protocol_error).toEqual({
       code: 'missing_report_worker_result',
       message:
         'Протокол воркера нарушен: "product-worker" завершил работу без финального report_worker_result. Используй этот текст только как промежуточный сигнал и при необходимости перепоручи следующий шаг явно.',
     });
-    expect(payload.next_action.tool).toBe('finish_execution_plan');
+    expect(payload.completed_step.highlights).toEqual([
+      'Протокол воркера нарушен: "product-worker" завершил работу без финального report_worker_result. Используй этот текст только как промежуточный сигнал и при необходимости перепоручи следующий шаг явно.',
+    ]);
+    expect(payload.next_step.tool).toBe('finish_execution_plan');
     expect(planningRuntime.getActivePlan('run-1')?.tasks[0]?.status).toBe('failed');
   });
 
@@ -580,30 +606,35 @@ describe('executeCatalogToolCall', () => {
     });
     executionContext = {
       activeExecutionResult: {
-        protocol: 'catalog_execution_v2',
         phase: 'new_execution_plan',
         executionSessionId: 'exec-1',
-        revision: 1,
-        plan_event: 'created',
         plan: {
           status: 'completed',
           tasks: [{ taskId: 'task-1', title: 'Готовый шаг', owner: 'product-worker', status: 'completed' }],
         },
-        completed_task: {
+        plan_update: {
+          type: 'created',
+          summary: 'План создан.',
+        },
+        completed_step: {
           taskId: 'task-1',
+          title: 'Готовый шаг',
           owner: 'product-worker',
           status: 'completed',
+          summary: 'Шаг "Готовый шаг" завершён.',
+          highlights: ['ok'],
+          worker_result: {
+            status: 'completed',
+            data: ['ok'],
+            missingData: [],
+            note: null,
+          },
         },
-        worker_result_raw: {
-          status: 'completed',
-          data: ['ok'],
-          missingData: [],
-          note: null,
-        },
-        next_action: {
+        next_step: {
           tool: 'finish_execution_plan',
           reason_code: 'plan_has_no_pending_steps',
-          instruction: 'Call finish_execution_plan unless you intentionally replace the plan.',
+          task: null,
+          summary: 'Следующий шаг: завершить выполнение через finish_execution_plan.',
         },
       },
     };

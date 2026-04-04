@@ -1,0 +1,61 @@
+import { type CatalogSpecialistSpec } from './types';
+import {
+  getAttributeTermTool,
+  getAttributeTool,
+  listAttributeTermsTool,
+  listAttributesTool,
+} from '../tools/woo/attributeTools';
+import { getProductTool, listProductsTool } from '../tools/woo/productTools';
+import {
+  batchVariationsTool,
+  createVariationTool,
+  deleteVariationTool,
+  generateVariationsTool,
+  getVariationTool,
+  listVariationsTool,
+  updateVariationTool,
+} from '../tools/woo/variationTools';
+
+export const variationWorkerSpec = {
+  id: 'variation-worker',
+  tools: {
+    domainRead: [listVariationsTool, getVariationTool],
+    domainMutations: [
+      createVariationTool,
+      updateVariationTool,
+      deleteVariationTool,
+      batchVariationsTool,
+      generateVariationsTool,
+    ],
+    researchRead: [
+      listProductsTool,
+      getProductTool,
+      listAttributesTool,
+      getAttributeTool,
+      listAttributeTermsTool,
+      getAttributeTermTool,
+    ],
+  },
+  knowledge: {
+    ownershipRules: [
+      'Ты работаешь только с дочерними variation существующего variable product.',
+      'Чтение и изменение variation адресуются через пару product_id + variation id; если родитель не установлен во входе, сначала разреши его через доступный product lookup.',
+      'Ты отвечаешь за факты и изменения конкретных variation: опции, цены, SKU, статусы и прочие поля строки вариации.',
+      'Ты не меняешь поля родительского товара, его categories, общие attributes или default_attributes; это зона product-worker.',
+      'Инструменты batch и generate применяй только для набора variation внутри уже определённого родительского товара.',
+    ],
+    lookupRules: [
+      'Для подготовки variation-owned шага ты можешь делать read-only lookup родительского товара и глобальных атрибутов/term-ов, чтобы подтвердить product_id и attribute context.',
+      'Lookup нужен только для подтверждения родителя, variation id и attribute context; не превращай его в самостоятельный workflow по созданию родителя или taxonomy.',
+    ],
+    blockerRules: [
+      'Если родительский товар или нужная taxonomy отсутствуют и для продолжения их надо создать либо подготовить, верни blocker на product-worker или attribute-worker.',
+      'Если после минимального lookup нельзя надёжно подтвердить product_id, variation id или attribute context, не зацикливайся: верни failed с конкретным missingData.',
+      'Если конечный шаг относится к родительскому товару, а не к variation, верни blocker на product-worker.',
+    ],
+  },
+  routingRules: [
+    'Если конечный шаг — создать, найти или обновить конкретную variation, сначала variation-worker; product-worker нужен только для parent-level mutations или когда blocker показал, что сначала надо подготовить родителя.',
+    'Цену или SKU **конкретной вариации** не поручать product-worker.',
+  ],
+} as const satisfies CatalogSpecialistSpec<'variation-worker'>;

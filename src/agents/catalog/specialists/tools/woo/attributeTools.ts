@@ -204,16 +204,3 @@ export const deleteAttributeTermTool = createWooTool({
     return buildToolSuccess(null);
   },
 });
-
-export const attributeWorkerWooTools = [
-  listAttributesTool,
-  getAttributeTool,
-  createAttributeTool,
-  updateAttributeTool,
-  deleteAttributeTool,
-  listAttributeTermsTool,
-  getAttributeTermTool,
-  createAttributeTermTool,
-  updateAttributeTermTool,
-  deleteAttributeTermTool,
-] as const;

@@ -9,7 +9,6 @@ import type {
   ProductVariationsBatchUpdateBody,
 } from '../../../../../services/woo-sdk/src/models/products';
 
-/** Атрибуты вариации: id глобального атрибута (GET /products/attributes), option — значение терма. Без name. */
 const variationAttributeItemSchema = z.object({
   id: z.coerce.number().int().min(1),
   option: z.string().min(1),
@@ -198,13 +197,3 @@ export const generateVariationsTool = createWooTool({
     return buildToolSuccess(result);
   },
 });
-
-export const variationWorkerWooTools = [
-  listVariationsTool,
-  getVariationTool,
-  createVariationTool,
-  updateVariationTool,
-  deleteVariationTool,
-  batchVariationsTool,
-  generateVariationsTool,
-] as const;

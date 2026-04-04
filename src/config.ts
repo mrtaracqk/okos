@@ -1,3 +1,4 @@
+import { type BindToolsInput } from '@langchain/core/language_models/chat_models';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { ChatGroq } from '@langchain/groq';
 import { ChatOpenAI } from '@langchain/openai';
@@ -85,7 +86,7 @@ function getModelName(model: ChatModelInstance) {
 }
 
 export const chatModel = {
-  bindTools(tools: any[]) {
+  bindTools(tools: BindToolsInput[]) {
     return getChatModelInstance().bindTools(tools);
   },
   get provider() {

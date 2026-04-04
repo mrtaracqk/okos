@@ -1,6 +1,6 @@
-import { CATALOG_WORKER_KNOWLEDGE } from './agents/catalog/catalogWorkerKnowledge';
-import { CATALOG_WORKER_IDS } from './agents/catalog/contracts/catalogWorkerId';
+import { type CatalogWorkerId } from './contracts/catalogExecutionOwners';
 import { renderCatalogForemanWorkerCapabilities } from './agents/catalog/foreman/planner/capabilitiesSummary';
+import { CATALOG_SPECIALIST_SPECS, CATALOG_SPECIALISTS_BY_ID } from './agents/catalog/specialists/specs';
 import { formatLocaleDateTime } from './utils';
 
 /** Единая формулировка про валюту каталога (MAIN, catalog-agent, воркеры). */
@@ -20,6 +20,20 @@ function renderRuleSection(title: string, rules: string[]) {
 
 ${rules.map((rule) => `- ${rule}`).join('\n')}
 `;
+}
+
+function renderCatalogWorkerOwnerUnion() {
+  return CATALOG_SPECIALIST_SPECS.map((spec) => spec.id).join(' | ');
+}
+
+function renderCatalogWorkerList() {
+  return CATALOG_SPECIALIST_SPECS.map((spec) => `- ${spec.id}`).join('\n');
+}
+
+function renderCatalogForemanRoutingRules() {
+  return CATALOG_SPECIALIST_SPECS.map((spec) =>
+    [`### ${spec.id}`, ...spec.routingRules.map((rule) => `- ${rule}`)].join('\n'),
+  ).join('\n\n');
 }
 
 function renderCatalogWorkerPrompt(params: {
@@ -92,6 +106,17 @@ ${renderAllowedTools(toolNames)}
 `;
 }
 
+export function getCatalogWorkerPrompt(workerId: CatalogWorkerId, toolNames: string[]) {
+  const k = CATALOG_SPECIALISTS_BY_ID[workerId];
+  return renderCatalogWorkerPrompt({
+    workerName: k.id,
+    toolNames,
+    ownershipRules: [...k.knowledge.ownershipRules],
+    lookupRules: [...k.knowledge.lookupRules],
+    blockerRules: [...k.knowledge.blockerRules],
+  });
+}
+
 export const PROMPTS = {
   MAIN: {
     SYSTEM: () => `**Дата и время:** ${formatLocaleDateTime(new Date())}
@@ -144,7 +169,7 @@ export const PROMPTS = {
 
 Ты — **catalog-agent**; **ОнлиАссистент** называет тебя менеджером каталога. Задачи приходят от него целиком.
 
-План → воркеры → JSON tool result \`catalog_execution_v2\` → \`finish_execution_plan\` с текстом ответа пользователю. Пользователь с воркерами не работает.
+План → воркеры → JSON tool result \`catalog_execution_v3\` → \`finish_execution_plan\` с текстом ответа пользователю. Пользователь с воркерами не работает.
 
 ### Поведение
 
@@ -191,12 +216,9 @@ ${renderCatalogForemanWorkerCapabilities()}
 
 ### Порядок и границы
 
-- Категории на товаре: если конечный шаг — создать товар или обновить его categories, сначала product-worker; category-worker нужен только когда lookup product-worker показал, что категорию или её parent/child prerequisite надо создать или подготовить отдельно.
-- Атрибуты на родителе variable: если конечный шаг — создать или обновить родительский товар либо его product-level attributes, сначала product-worker; attribute-worker нужен только когда lookup показал, что глобального attribute / term ещё нет и его надо создать.
-- Иерархия parent/child у категорий — category-worker.
-- Глобальные атрибуты/термины — attribute-worker; родитель variable получает \`attributes\` через product-worker; сочетание опций на SKU — variation-worker.
-- Если конечный шаг — создать, найти или обновить конкретную variation, сначала variation-worker; product-worker нужен только для parent-level mutations или когда blocker показал, что сначала надо подготовить родителя.
-- Сначала родитель variable (тип и атрибуты на нём), затем строки variation по \`product_id\`. Цену или SKU **конкретной вариации** не поручать product-worker.
+Выбирай owner по конечному действию и учитывай lookup как часть шага owner-а, если этот owner может подтвердить prerequisite своими read/list.
+
+${renderCatalogForemanRoutingRules()}
 
 ---
 
@@ -210,15 +232,17 @@ ${renderCatalogForemanWorkerCapabilities()}
 
 **Artifacts** из последнего успешного шага runtime может передать только в **следующий** шаг как \`upstreamArtifacts\`. В план они не записываются, дальше по цепочке сами не тянутся, fallback на более ранние шаги нет.
 
-После \`new_execution_plan\` или \`approve_step\` tool result уже содержит актуальный JSON-first execution result \`catalog_execution_v2\`. Отдельного \`WORKER_RESULT\` или narrative follow-up сообщения не будет.
+После \`new_execution_plan\` или \`approve_step\` tool result уже содержит актуальный JSON-first execution result \`catalog_execution_v3\`. Отдельного \`WORKER_RESULT\` или narrative follow-up сообщения не будет.
 
 Ориентируйся на execution result как на runtime state:
 
-- шаг успешен, состав плана и входы оставшихся задач актуальны, а \`next_action.tool=approve_step\` → \`approve_step\`;
+- если есть \`plan_update\`, это сигнал, что план только что создан или заменён;
+- результат только что завершённого шага читай в \`completed_step.highlights\`;
+- шаг успешен, состав плана и входы оставшихся задач актуальны, а \`next_step.tool=approve_step\` → \`approve_step\`;
 - worker вернул blocker на чужую mutation, чужой owner или отсутствующую prerequisite-сущность → \`new_execution_plan(tasks[])\` с owner-ом нужного шага либо \`finish_execution_plan\`, если запрос упёрся в недостающие входные данные;
 - нужно изменить список шагов, общий \`planContext\` или step-local вход у предстоящих задач → \`new_execution_plan(planContext, tasks[])\` (не пересобирай без причины; не схлопывай многошаговый план в один шаг);
 - тот же вопрос, но данные на **другом слое** (родитель vs вариация и т.д.) → \`new_execution_plan\` с хвостом и facts в execution, не \`finish_execution_plan\` из-за пустых полей на предыдущем слое;
-- успех шага **сам по себе** не повод для \`new_execution_plan\`, если хвост плана всё ещё верен и \`next_action.tool=approve_step\` — тогда \`approve_step\`;
+- успех шага **сам по себе** не повод для \`new_execution_plan\`, если хвост плана всё ещё верен и \`next_step.tool=approve_step\` — тогда \`approve_step\`;
 - всё сделано или тупик → \`finish_execution_plan\`.
 
 ---
@@ -248,9 +272,9 @@ ${playbooks}
 Перед вызовом воркера план обязателен.
 
 - План задаётся и полностью заменяется через \`new_execution_plan(planContext, tasks[])\`; повторный вызов снова запускает первую задачу и очищает старые \`upstreamArtifacts\`.
-- После \`new_execution_plan\` / \`approve_step\` reasoning идёт по актуальному JSON result \`catalog_execution_v2\` в tool result и runtime state. Смотри на \`next_action.tool\`: \`approve_step\` — хвост плана остаётся валиден; \`new_execution_plan\` — план нужно заменить; \`finish_execution_plan\` — pending шагов больше нет или execution-часть завершена. Закрытие только через \`finish_execution_plan\`; \`summary\` обязателен — **готовый текст ответа пользователю**, который можно отправить в чат как есть; \`outcome=completed\` — успех, \`failed\` — ошибка или невозможность.
+- После \`new_execution_plan\` / \`approve_step\` reasoning идёт по актуальному JSON result \`catalog_execution_v3\` в tool result и runtime state. Если есть \`plan_update\`, значит план только что создан или заменён. Смотри на \`completed_step.highlights\` как на итог последнего шага. Затем смотри на \`next_step.tool\`: \`approve_step\` — хвост плана остаётся валиден и следующий шаг уже указан в \`next_step.task\`; \`new_execution_plan\` — план нужно заменить; \`finish_execution_plan\` — pending шагов больше нет или execution-часть завершена. Закрытие только через \`finish_execution_plan\`; \`summary\` обязателен — **готовый текст ответа пользователю**, который можно отправить в чат как есть; \`outcome=completed\` — успех, \`failed\` — ошибка или невозможность.
 
-\`planContext\`: \`goal\`, \`facts\`, \`constraints\` — общий контекст всего плана. Задача: \`taskId\`, \`responsible\` (${CATALOG_WORKER_IDS.join(' | ')}), \`task\` — узкий объектив шага без всего сценария; \`inputData\`: \`facts\` (атомарные строки, не хронология плана), \`constraints\`, \`contextNotes\` — одна короткая строка «зачем шаг»; execution — **локальный вход воркера**, не текст для пользователя. \`responseStructure\` — формат ответа воркера.
+\`planContext\`: \`goal\`, \`facts\`, \`constraints\` — общий контекст всего плана. Задача: \`taskId\`, \`responsible\` (${renderCatalogWorkerOwnerUnion()}), \`task\` — узкий объектив шага без всего сценария; \`inputData\`: \`facts\` (атомарные строки, не хронология плана), \`constraints\`, \`contextNotes\` — одна короткая строка «зачем шаг»; execution — **локальный вход воркера**, не текст для пользователя. \`responseStructure\` — формат ответа воркера.
 
 ---
 
@@ -261,7 +285,7 @@ ${playbooks}
 Формулируй handoff вокруг конечной задачи owner-а. Не разбивай её на микрошаги вроде «найди category_id» или «сначала найди attribute_id», если этот worker умеет сам сделать lookup и затем либо завершить шаг, либо вернуть blocker.
 
 Исполнители:
-${CATALOG_WORKER_IDS.map((id) => `- ${id}`).join('\n')}
+${renderCatalogWorkerList()}
 
 ---
 
@@ -278,47 +302,5 @@ ${CATALOG_WORKER_IDS.map((id) => `- ${id}`).join('\n')}
 - Пиши естественно, как в рабочем чате: живо, без канцелярита и сложных терминов; 
 — абзацы и списки, без простыни в одну строку
 `,
-  },
-  CATALOG_WORKERS: {
-    CATEGORY: (toolNames: string[]) => {
-      const k = CATALOG_WORKER_KNOWLEDGE['category-worker'];
-      return renderCatalogWorkerPrompt({
-        workerName: k.id,
-        toolNames,
-        ownershipRules: [...k.ownershipRules],
-        lookupRules: [...k.lookupRules],
-        blockerRules: [...k.blockerRules],
-      });
-    },
-    ATTRIBUTE: (toolNames: string[]) => {
-      const k = CATALOG_WORKER_KNOWLEDGE['attribute-worker'];
-      return renderCatalogWorkerPrompt({
-        workerName: k.id,
-        toolNames,
-        ownershipRules: [...k.ownershipRules],
-        lookupRules: [...k.lookupRules],
-        blockerRules: [...k.blockerRules],
-      });
-    },
-    PRODUCT: (toolNames: string[]) => {
-      const k = CATALOG_WORKER_KNOWLEDGE['product-worker'];
-      return renderCatalogWorkerPrompt({
-        workerName: k.id,
-        toolNames,
-        ownershipRules: [...k.ownershipRules],
-        lookupRules: [...k.lookupRules],
-        blockerRules: [...k.blockerRules],
-      });
-    },
-    VARIATION: (toolNames: string[]) => {
-      const k = CATALOG_WORKER_KNOWLEDGE['variation-worker'];
-      return renderCatalogWorkerPrompt({
-        workerName: k.id,
-        toolNames,
-        ownershipRules: [...k.ownershipRules],
-        lookupRules: [...k.lookupRules],
-        blockerRules: [...k.blockerRules],
-      });
-    },
   },
 };

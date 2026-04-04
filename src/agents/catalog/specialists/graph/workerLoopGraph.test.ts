@@ -1,72 +1,28 @@
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { tool } from '@langchain/core/tools';
 import { describe, expect, test } from 'bun:test';
-import { type WorkerTaskEnvelope } from '../../contracts/workerRequest';
-import { renderWorkerHandoffMessage } from './catalogToolLoop';
+import { z } from 'zod';
 import { createWorkerLoopGraph } from './workerLoopGraph';
 
-describe('createWorkerLoopGraph', () => {
-  test('renders worker handoff as a stable structured message', () => {
-    const handoff: WorkerTaskEnvelope = {
-      planContext: {
-        goal: 'Найти товар и проверить его состояние',
-        facts: ['SKU: IPHONE-17-BLK'],
-        constraints: ['Не создавать новые сущности'],
-      },
-      taskInput: {
-        objective: 'Найди товар по SKU',
-        facts: ['SKU: IPHONE-17-BLK', 'Тип: simple'],
-        constraints: ['Только read-only'],
-        expectedOutput: 'status, data, missingData',
-        contextNotes: 'Нужно ответить пользователю без предположений.',
-      },
-      upstreamArtifacts: [{ product_id: 101, sku: 'IPHONE-17-BLK' }],
-    };
-
-    expect(renderWorkerHandoffMessage(handoff)).toBe(
-      [
-        'WORKER_HANDOFF',
-        '```json',
-        JSON.stringify(
-          {
-            planContext: {
-              goal: 'Найти товар и проверить его состояние',
-              facts: ['SKU: IPHONE-17-BLK'],
-              constraints: ['Не создавать новые сущности'],
-            },
-            taskInput: {
-              objective: 'Найди товар по SKU',
-              facts: ['SKU: IPHONE-17-BLK', 'Тип: simple'],
-              constraints: ['Только read-only'],
-              expectedOutput: 'status, data, missingData',
-              contextNotes: 'Нужно ответить пользователю без предположений.',
-            },
-            upstreamArtifacts: [{ product_id: 101, sku: 'IPHONE-17-BLK' }],
-          },
-          null,
-          2
-        ),
-        '```',
-      ].join('\n')
-    );
+function createTestStructuredTool(
+  name: string,
+  invoke: (input: Record<string, unknown>) => Promise<unknown>
+) {
+  return tool(invoke, {
+    name,
+    description: `Test tool: ${name}`,
+    schema: z.record(z.string(), z.unknown()),
   });
+}
 
+describe('createWorkerLoopGraph', () => {
   test('injects synthetic handoff message from structured state without upstream HumanMessage', async () => {
     let capturedMessages: any[] = [];
-    const handoff: WorkerTaskEnvelope = {
-      planContext: {
-        goal: 'Найти товар',
-        facts: ['request=lookup'],
-        constraints: [],
-      },
-      taskInput: {
-        objective: 'Найди товар по SKU',
-        facts: ['SKU: IPHONE-17-BLK'],
-        constraints: ['Только read-only'],
-        expectedOutput: 'status, data, missingData',
-        contextNotes: 'Нужен точный ответ по каталогу.',
-      },
+    const handoff = {
+      taskId: 'task-1',
+      objective: 'Найди товар по SKU',
     };
+    const renderHandoffMessage = (value: typeof handoff) => `HANDOFF:${value.taskId}:${value.objective}`;
 
     const model = {
       bindTools: () => ({
@@ -81,7 +37,7 @@ describe('createWorkerLoopGraph', () => {
       model,
       tools: [],
       systemPrompt: () => 'system',
-      renderHandoffMessage: renderWorkerHandoffMessage,
+      renderHandoffMessage,
     }).compile();
 
     await graph.invoke({
@@ -91,37 +47,10 @@ describe('createWorkerLoopGraph', () => {
 
     expect(capturedMessages).toHaveLength(2);
     expect(capturedMessages[0]?.content).toBe('system');
-    expect(capturedMessages[1]?.content).toBe(renderWorkerHandoffMessage(handoff));
+    expect(capturedMessages[1]?.content).toBe(renderHandoffMessage(handoff));
   });
 
-  test('renders non-json-safe artifacts without throwing', () => {
-    const circular: Record<string, unknown> = { label: 'artifact' };
-    circular.self = circular;
-
-    const handoff: WorkerTaskEnvelope = {
-      planContext: {
-        goal: 'Проверить payload',
-        facts: [],
-        constraints: [],
-      },
-      taskInput: {
-        objective: 'Проверь payload',
-        facts: [],
-        constraints: [],
-        expectedOutput: 'status',
-      },
-      upstreamArtifacts: [{ callable: function sample() {}, size: BigInt(17), circular }],
-    };
-
-    const rendered = renderWorkerHandoffMessage(handoff);
-
-    expect(rendered).toContain('"upstreamArtifacts": [');
-    expect(rendered).toContain('"callable": "function sample()');
-    expect(rendered).toContain('"size": "17"');
-    expect(rendered).toContain('"self": "[Circular]"');
-  });
-
-  test('deduplicates repeated text, structured, and content payloads in ToolMessage content', async () => {
+  test('serializes successful tool payload as-is in ToolMessage content', async () => {
     let invocationCount = 0;
     const duplicatedText = '{"id":123,"name":"Sample"}';
 
@@ -153,17 +82,14 @@ describe('createWorkerLoopGraph', () => {
     const graph = createWorkerLoopGraph({
       model,
       tools: [
-        {
-          name: 'fetch_product',
-          invoke: async () => ({
-            ok: true,
-            structured: {
-              text: duplicatedText,
-              id: 123,
-              name: 'Sample',
-            },
-          }),
-        },
+        createTestStructuredTool('fetch_product', async () => ({
+          ok: true,
+          structured: {
+            text: duplicatedText,
+            id: 123,
+            name: 'Sample',
+          },
+        })),
       ],
       systemPrompt: () => 'system',
     }).compile();
@@ -219,19 +145,16 @@ describe('createWorkerLoopGraph', () => {
     const graph = createWorkerLoopGraph({
       model,
       tools: [
-        {
-          name: 'fetch_product',
-          invoke: async () => ({
-            ok: true,
-            structured: {
-              text: 'summary',
-              description: longString,
-              nested: {
-                notes: nestedLongString,
-              },
+        createTestStructuredTool('fetch_product', async () => ({
+          ok: true,
+          structured: {
+            text: 'summary',
+            description: longString,
+            nested: {
+              notes: nestedLongString,
             },
-          }),
-        },
+          },
+        })),
       ],
       systemPrompt: () => 'system',
     }).compile();
@@ -245,11 +168,10 @@ describe('createWorkerLoopGraph', () => {
 
     expect(payload.structured.description).toHaveLength(350);
     expect(payload.structured.nested.notes).toHaveLength(340);
-    expect(payload.content[0].resource.description).toHaveLength(360);
-    expect(payload.content[1].text).toHaveLength(360);
+    expect(payload).not.toHaveProperty('content');
   });
 
-  test('uses structured.result as compact ToolMessage content for successful Woo envelopes', async () => {
+  test('keeps successful Woo envelopes intact in ToolMessage content', async () => {
     let invocationCount = 0;
     const resultPayload = {
       id: 4335,
@@ -286,15 +208,12 @@ describe('createWorkerLoopGraph', () => {
     const graph = createWorkerLoopGraph({
       model,
       tools: [
-        {
-          name: 'fetch_product',
-          invoke: async () => ({
-            ok: true,
-            structured: {
-              result: resultPayload,
-            },
-          }),
-        },
+        createTestStructuredTool('fetch_product', async () => ({
+          ok: true,
+          structured: {
+            result: resultPayload,
+          },
+        })),
       ],
       systemPrompt: () => 'system',
     }).compile();
@@ -305,7 +224,14 @@ describe('createWorkerLoopGraph', () => {
 
     const toolMessage = result.messages.find((message) => message instanceof ToolMessage);
     expect(toolMessage).toBeInstanceOf(ToolMessage);
-    expect(toolMessage?.content).toBe(JSON.stringify(resultPayload));
+    expect(toolMessage?.content).toBe(
+      JSON.stringify({
+        ok: true,
+        structured: {
+          result: resultPayload,
+        },
+      })
+    );
   });
 
   test('stops the loop after a designated final tool call', async () => {
@@ -345,11 +271,11 @@ describe('createWorkerLoopGraph', () => {
           {
             name: 'report_worker_result',
             description: 'Finalize worker result.',
+            schema: z.record(z.string(), z.unknown()),
           }
         ),
       ],
       systemPrompt: () => 'system',
-      finalToolNames: ['report_worker_result'],
     }).compile();
 
     const result = await graph.invoke({
@@ -359,6 +285,212 @@ describe('createWorkerLoopGraph', () => {
     expect(invocationCount).toBe(1);
     expect(result.toolRuns).toHaveLength(1);
     expect(result.toolRuns[0]?.toolName).toBe('report_worker_result');
+  });
+
+  test('ignores tail tool calls after report_worker_result in the same model response', async () => {
+    let mutationInvokeCount = 0;
+
+    const model = {
+      bindTools: () => ({
+        invoke: async () =>
+          new AIMessage({
+            content: '',
+            tool_calls: [
+              {
+                id: 'call_final',
+                name: 'report_worker_result',
+                args: {
+                  status: 'completed',
+                  data: ['worker finished'],
+                  missingData: [],
+                  note: null,
+                },
+              },
+              {
+                id: 'call_mutation',
+                name: 'dangerous_mutation',
+                args: {
+                  productId: 42,
+                },
+              },
+            ],
+          }),
+      }),
+    };
+
+    const graph = createWorkerLoopGraph({
+      model,
+      tools: [
+        tool(
+          async () => ({
+            ok: true,
+            structured: {
+              status: 'completed',
+              data: ['worker finished'],
+              missingData: [],
+              note: null,
+            },
+          }),
+          {
+            name: 'report_worker_result',
+            description: 'Finalize worker result.',
+            schema: z.record(z.string(), z.unknown()),
+          }
+        ),
+        createTestStructuredTool('dangerous_mutation', async () => {
+          mutationInvokeCount += 1;
+          return {
+            ok: true,
+            structured: {
+              mutated: true,
+            },
+          };
+        }),
+      ],
+      systemPrompt: () => 'system'
+    }).compile();
+
+    const result = await graph.invoke({
+      messages: [new HumanMessage('finalize')],
+    });
+
+    expect(mutationInvokeCount).toBe(0);
+    expect(result.toolRuns).toHaveLength(2);
+    expect(result.toolRuns[0]).toMatchObject({
+      toolName: 'report_worker_result',
+      status: 'completed',
+      structured: {
+        status: 'completed',
+        data: ['worker finished'],
+      },
+    });
+    expect(result.toolRuns[1]).toMatchObject({
+      toolName: 'dangerous_mutation',
+      args: {
+        productId: 42,
+      },
+      status: 'failed',
+      structured: {
+        ignored: true,
+        reason: 'final_tool_already_called',
+        finalToolName: 'report_worker_result',
+        finalToolCallId: 'call_final',
+        rawArgs: {
+          productId: 42,
+        },
+      },
+      error: {
+        source: 'catalog-worker',
+        type: 'protocol_error',
+        code: 'ignored_after_final_tool',
+        retryable: false,
+      },
+    });
+
+    const toolMessages = result.messages.filter((message) => message instanceof ToolMessage);
+    expect(toolMessages).toHaveLength(2);
+    expect(String(toolMessages[1]?.content)).toContain('ignored_after_final_tool');
+  });
+
+  test('ignores trailing tool calls after report_worker_result with invalid args in the same model response', async () => {
+    let mutationInvokeCount = 0;
+
+    const model = {
+      bindTools: () => ({
+        invoke: async () =>
+          new AIMessage({
+            content: '',
+            tool_calls: [
+              {
+                id: 'call_final',
+                name: 'report_worker_result',
+                args: '{"status":"completed"',
+              },
+              {
+                id: 'call_mutation',
+                name: 'dangerous_mutation',
+                args: {
+                  productId: 42,
+                },
+              },
+            ] as any,
+          }),
+      }),
+    };
+
+    const graph = createWorkerLoopGraph({
+      model,
+      tools: [
+        tool(
+          async () => ({
+            ok: true,
+            structured: {
+              status: 'completed',
+            },
+          }),
+          {
+            name: 'report_worker_result',
+            description: 'Finalize worker result.',
+            schema: z.record(z.string(), z.unknown()),
+          }
+        ),
+        createTestStructuredTool('dangerous_mutation', async () => {
+          mutationInvokeCount += 1;
+          return {
+            ok: true,
+            structured: {
+              mutated: true,
+            },
+          };
+        }),
+      ],
+      systemPrompt: () => 'system'
+    }).compile();
+
+    const result = await graph.invoke({
+      messages: [new HumanMessage('finalize')],
+    });
+
+    expect(mutationInvokeCount).toBe(0);
+    expect(result.toolRuns).toHaveLength(2);
+    expect(result.toolRuns[0]).toMatchObject({
+      toolName: 'report_worker_result',
+      args: {},
+      status: 'failed',
+      error: {
+        source: 'catalog-worker',
+        type: 'invalid_tool_args',
+        code: 'invalid_tool_args',
+        retryable: false,
+      },
+    });
+    expect(result.toolRuns[1]).toMatchObject({
+      toolName: 'dangerous_mutation',
+      args: {
+        productId: 42,
+      },
+      status: 'failed',
+      structured: {
+        ignored: true,
+        reason: 'final_tool_already_called',
+        finalToolName: 'report_worker_result',
+        finalToolCallId: 'call_final',
+        rawArgs: {
+          productId: 42,
+        },
+      },
+      error: {
+        source: 'catalog-worker',
+        type: 'protocol_error',
+        code: 'ignored_after_final_tool',
+        retryable: false,
+      },
+    });
+
+    const toolMessages = result.messages.filter((message) => message instanceof ToolMessage);
+    expect(toolMessages).toHaveLength(2);
+    expect(String(toolMessages[0]?.content)).toContain('invalid_tool_args');
+    expect(String(toolMessages[1]?.content)).toContain('ignored_after_final_tool');
   });
 
   test('parses tool_calls.args when they are a JSON string (e.g. from OpenAI)', async () => {
@@ -388,16 +520,13 @@ describe('createWorkerLoopGraph', () => {
     const graph = createWorkerLoopGraph({
       model,
       tools: [
-        {
-          name: 'wc_v3_products_list',
-          invoke: async (input: Record<string, unknown>) => {
-            capturedArgs = input;
-            return {
-              ok: true,
-              structured: { result: [] },
-            };
-          },
-        },
+        createTestStructuredTool('wc_v3_products_list', async (input: Record<string, unknown>) => {
+          capturedArgs = input;
+          return {
+            ok: true,
+            structured: { result: [] },
+          };
+        }),
       ],
       systemPrompt: () => 'system',
     }).compile();
@@ -441,16 +570,13 @@ describe('createWorkerLoopGraph', () => {
     const graph = createWorkerLoopGraph({
       model,
       tools: [
-        {
-          name: 'wc_v3_products_list',
-          invoke: async () => {
-            toolInvokeCount += 1;
-            return {
-              ok: true,
-              structured: { result: [] },
-            };
-          },
-        },
+        createTestStructuredTool('wc_v3_products_list', async () => {
+          toolInvokeCount += 1;
+          return {
+            ok: true,
+            structured: { result: [] },
+          };
+        }),
       ],
       systemPrompt: () => 'system',
     }).compile();

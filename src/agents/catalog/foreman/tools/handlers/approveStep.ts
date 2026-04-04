@@ -76,7 +76,6 @@ export async function handleApproveStepToolCall(
           phase: 'approve_step',
           planEvent: 'advanced',
           executionSessionId: executionContext.activeExecutionResult.executionSessionId,
-          revision: executionContext.activeExecutionResult.revision + 1,
         });
       } catch (error) {
         return {

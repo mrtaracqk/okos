@@ -5,7 +5,8 @@ export {
   formatCatalogDelegationUserMessage,
   type CatalogDelegationResult,
 } from './contracts/catalogDelegation';
-export type { CatalogWorkerId } from './contracts/catalogWorkerId';
+export type { CatalogWorkerId } from '../../contracts/catalogExecutionOwners';
+export type { CatalogSpecialistSpec } from './specialists/specs';
 export type { WorkerRun } from './contracts/workerRun';
 export type { WorkerTaskEnvelope } from './contracts/workerRequest';
 export type { WorkerResultEnvelope } from './contracts/workerResult';

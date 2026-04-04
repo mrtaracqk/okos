@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { PROMPTS } from './prompts';
-import { getCatalogWorkerRuntimeTools } from './agents/catalog/specialists/shared/workerToolsets';
+import { getCatalogWorkerPrompt, PROMPTS } from './prompts';
+import { getCatalogWorkerRuntimeTools } from './agents/catalog/specialists/specs';
 
 describe('catalog prompts stage 4-5', () => {
   test('tells foreman to start with the final owner and keep lookup inside owner steps', () => {
@@ -14,13 +14,16 @@ describe('catalog prompts stage 4-5', () => {
     expect(prompt).toContain('Не разбивай её на микрошаги вроде «найди category_id»');
     expect(prompt).toContain('**Artifacts** из последнего успешного шага runtime может передать только в **следующий** шаг как `upstreamArtifacts`.');
     expect(prompt).toContain('planContext');
-    expect(prompt).toContain('catalog_execution_v2');
-    expect(prompt).toContain('next_action.tool');
+    expect(prompt).toContain('catalog_execution_v3');
+    expect(prompt).toContain('next_step.tool');
+    expect(prompt).toContain('completed_step.highlights');
+    expect(prompt).toContain('plan_update');
     expect(prompt).not.toContain('structured payload WORKER_RESULT');
   });
 
   test('renders product-worker prompt with explicit ownership, lookup and blocker guardrails', () => {
-    const prompt = PROMPTS.CATALOG_WORKERS.PRODUCT(
+    const prompt = getCatalogWorkerPrompt(
+      'product-worker',
       getCatalogWorkerRuntimeTools('product-worker').map((tool) => tool.name)
     );
 
@@ -41,7 +44,8 @@ describe('catalog prompts stage 4-5', () => {
   });
 
   test('renders variation-worker prompt with anti-loop lookup wording', () => {
-    const prompt = PROMPTS.CATALOG_WORKERS.VARIATION(
+    const prompt = getCatalogWorkerPrompt(
+      'variation-worker',
       getCatalogWorkerRuntimeTools('variation-worker').map((tool) => tool.name)
     );
 

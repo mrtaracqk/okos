@@ -1,18 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import { CATALOG_WORKER_TOOLSETS, getCatalogWorkerRuntimeTools } from './workerToolsets';
+import { CATALOG_SPECIALISTS_BY_ID, getCatalogWorkerRuntimeTools } from '../specs';
 
 function actualNames(tools: readonly { actualToolName: string }[]) {
   return tools.map((tool) => tool.actualToolName);
 }
 
-describe('workerToolsets', () => {
+describe('toolsets', () => {
   test('keeps category and attribute workers without cross-domain research tools', () => {
-    expect(actualNames(CATALOG_WORKER_TOOLSETS['category-worker'].researchRead)).toEqual([]);
-    expect(actualNames(CATALOG_WORKER_TOOLSETS['attribute-worker'].researchRead)).toEqual([]);
+    expect(actualNames(CATALOG_SPECIALISTS_BY_ID['category-worker'].tools.researchRead)).toEqual([]);
+    expect(actualNames(CATALOG_SPECIALISTS_BY_ID['attribute-worker'].tools.researchRead)).toEqual([]);
   });
 
   test('gives product-worker the stage 2 research lookup matrix', () => {
-    expect(actualNames(CATALOG_WORKER_TOOLSETS['product-worker'].researchRead)).toEqual([
+    expect(actualNames(CATALOG_SPECIALISTS_BY_ID['product-worker'].tools.researchRead)).toEqual([
       'wc.v3.products_categories_list',
       'wc.v3.products_categories_read',
       'wc.v3.products_attributes_list',
@@ -25,7 +25,7 @@ describe('workerToolsets', () => {
   });
 
   test('gives variation-worker the stage 2 research lookup matrix', () => {
-    expect(actualNames(CATALOG_WORKER_TOOLSETS['variation-worker'].researchRead)).toEqual([
+    expect(actualNames(CATALOG_SPECIALISTS_BY_ID['variation-worker'].tools.researchRead)).toEqual([
       'wc.v3.products_list',
       'wc.v3.products_read',
       'wc.v3.products_attributes_list',

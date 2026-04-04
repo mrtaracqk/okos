@@ -1,10 +1,9 @@
-export const PLAN_TASK_OWNERS = [
-  'catalog-agent',
-  'category-worker',
-  'attribute-worker',
-  'product-worker',
-  'variation-worker',
-] as const;
+import {
+  CATALOG_TASK_OWNERS,
+  type CatalogWorkerId,
+} from '../../contracts/catalogExecutionOwners';
+
+export const PLAN_TASK_OWNERS = CATALOG_TASK_OWNERS;
 
 export const PLAN_TASK_STATUSES = [
   'pending',
@@ -16,7 +15,7 @@ export const PLAN_TASK_STATUSES = [
 
 export const PLAN_STATUSES = ['active', 'completed', 'failed', 'abandoned'] as const;
 
-export type PlanTaskOwner = (typeof PLAN_TASK_OWNERS)[number];
+export type PlanTaskOwner = (typeof CATALOG_TASK_OWNERS)[number];
 export type PlanTaskStatus = (typeof PLAN_TASK_STATUSES)[number];
 export type RuntimePlanStatus = (typeof PLAN_STATUSES)[number];
 
@@ -72,7 +71,7 @@ export type PlanningChannelAdapter = {
  * Executable task input shape for `new_execution_plan`.
  * Maps to RuntimePlanTask.execution internally.
  */
-export type ExecutableTaskOwner = Exclude<PlanTaskOwner, 'catalog-agent'>;
+export type ExecutableTaskOwner = CatalogWorkerId;
 
 export type ExecutableTask = {
   taskId: string;

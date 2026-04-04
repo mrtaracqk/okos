@@ -1,12 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import { buildExecutionResult, serializeExecutionResult } from './executionResult';
+import {
+  buildExecutionResult,
+  buildExecutionResultAdditionalKwargs,
+  serializeExecutionResult,
+} from './executionResult';
 
 describe('executionResult', () => {
   test('prefers approve_step after a completed run when pending work remains', () => {
     const result = buildExecutionResult({
       phase: 'new_execution_plan',
       executionSessionId: 'exec-1',
-      revision: 1,
       planEvent: 'created',
       completedTaskId: 'task-1',
       run: {
@@ -35,9 +38,36 @@ describe('executionResult', () => {
       },
     });
 
-    expect(result.next_action.tool).toBe('approve_step');
-    expect(result.next_action.reason_code).toBe('ready_for_next_pending_step');
-    expect(result.worker_result_raw).toEqual({
+    expect(result.plan_update).toEqual({
+      type: 'created',
+      summary: 'План создан.',
+    });
+    expect(result.completed_step).toEqual({
+      taskId: 'task-1',
+      title: 'Найти товар',
+      owner: 'product-worker',
+      status: 'completed',
+      summary: 'Шаг "Найти товар" завершён.',
+      highlights: ['Товар найден.', 'product_id=101'],
+      worker_result: {
+        status: 'completed',
+        data: ['product_id=101'],
+        missingData: [],
+        note: null,
+        artifacts: [{ product_id: 101 }],
+        summary: 'Товар найден.',
+      },
+    });
+    expect(result.next_step.tool).toBe('approve_step');
+    expect(result.next_step.reason_code).toBe('ready_for_next_pending_step');
+    expect(result.next_step.task).toEqual({
+      taskId: 'task-2',
+      title: 'Проверить вариации',
+      owner: 'variation-worker',
+      status: 'pending',
+    });
+    expect(result.next_step.summary).toBe('Следующий шаг: выполнить "Проверить вариации" через approve_step.');
+    expect(result.completed_step.worker_result).toEqual({
       status: 'completed',
       data: ['product_id=101'],
       missingData: [],
@@ -45,14 +75,17 @@ describe('executionResult', () => {
       artifacts: [{ product_id: 101 }],
       summary: 'Товар найден.',
     });
-    expect(serializeExecutionResult(result)).toContain('"protocol": "catalog_execution_v2"');
+    expect(serializeExecutionResult(result)).not.toContain('"protocol"');
+    expect(buildExecutionResultAdditionalKwargs(result)).toMatchObject({
+      executionSessionId: 'exec-1',
+      phase: 'new_execution_plan',
+    });
   });
 
   test('requires new_execution_plan after blocker or failed run while pending work remains', () => {
     const result = buildExecutionResult({
       phase: 'approve_step',
       executionSessionId: 'exec-2',
-      revision: 2,
       planEvent: 'advanced',
       completedTaskId: 'task-2',
       run: {
@@ -86,15 +119,23 @@ describe('executionResult', () => {
     });
 
     expect(result.plan.status).toBe('failed');
-    expect(result.next_action.tool).toBe('new_execution_plan');
-    expect(result.next_action.reason_code).toBe('worker_blocker_requires_plan_rebuild');
+    expect(result.plan_update).toBeNull();
+    expect(result.completed_step.summary).toBe('Шаг "Проверить вариации" завершился ошибкой.');
+    expect(result.completed_step.highlights).toEqual([
+      'Нужен другой owner.',
+      'Недостающие данные: variation_id',
+      'Blocker: wrong_owner -> product-worker: Сначала нужен parent-level update.',
+    ]);
+    expect(result.next_step.tool).toBe('new_execution_plan');
+    expect(result.next_step.reason_code).toBe('worker_blocker_requires_plan_rebuild');
+    expect(result.next_step.task).toBeNull();
+    expect(result.next_step.summary).toBe('Следующий шаг: пересобрать план через new_execution_plan.');
   });
 
   test('returns a protocol error result when worker report is missing', () => {
     const result = buildExecutionResult({
       phase: 'approve_step',
       executionSessionId: 'exec-3',
-      revision: 3,
       planEvent: 'advanced',
       completedTaskId: 'task-2',
       run: {
@@ -118,12 +159,17 @@ describe('executionResult', () => {
       },
     });
 
-    expect(result.worker_result_raw).toBeNull();
-    expect(result.protocol_error).toEqual({
+    expect(result.plan_update).toBeNull();
+    expect(result.completed_step.worker_result).toBeNull();
+    expect(result.completed_step.protocol_error).toEqual({
       code: 'missing_report_worker_result',
       message: 'worker did not send report_worker_result',
     });
-    expect(result.next_action.tool).toBe('finish_execution_plan');
-    expect(result.next_action.reason_code).toBe('plan_has_no_pending_steps');
+    expect(result.completed_step.summary).toBe('Шаг "Проверить вариации" завершился с protocol error.');
+    expect(result.completed_step.highlights).toEqual(['worker did not send report_worker_result']);
+    expect(result.next_step.tool).toBe('finish_execution_plan');
+    expect(result.next_step.reason_code).toBe('plan_has_no_pending_steps');
+    expect(result.next_step.task).toBeNull();
+    expect(result.next_step.summary).toBe('Следующий шаг: завершить выполнение через finish_execution_plan.');
   });
 });

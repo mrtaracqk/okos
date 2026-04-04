@@ -118,11 +118,3 @@ export const deleteCategoryTool = createWooTool({
     return buildToolSuccess(null);
   },
 });
-
-export const categoryWorkerWooTools = [
-  listCategoriesTool,
-  getCategoryTool,
-  createCategoryTool,
-  updateCategoryTool,
-  deleteCategoryTool,
-] as const;

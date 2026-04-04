@@ -1,4 +1,4 @@
-import { tool } from '@langchain/core/tools';
+import { type ClientTool, tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import type { WooClient } from '../woo-sdk/src/client';
 import { executeWooTool } from './wooToolExecutor';
@@ -15,7 +15,7 @@ export type CreateWooToolSpec<T> = {
   run: (input: T, ctx: { client: WooClient }) => Promise<unknown>;
 };
 
-export type WooTool = ReturnType<typeof tool> & { actualToolName: string };
+export type WooTool = ClientTool & { actualToolName: string };
 
 export function createWooTool<T>(spec: CreateWooToolSpec<T>): WooTool {
   const safeName = modelSafeName(spec.name);

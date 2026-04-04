@@ -1,6 +1,6 @@
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { CATALOG_WORKER_IDS, type CatalogWorkerId } from './catalogWorkerId';
+import { CATALOG_WORKER_IDS, type CatalogWorkerId } from '../../../contracts/catalogExecutionOwners';
 import { type ToolRun } from '../../shared/toolRun';
 
 export const WORKER_RESULT_TOOL_NAME = 'report_worker_result';

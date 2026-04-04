@@ -6,12 +6,6 @@ import {
 } from '../../contracts/workerResult';
 import { toJsonSafeValue } from '../../../shared/jsonSafe';
 import { type ToolRun } from '../../../shared/toolRun';
-import { createWorkerLoopGraph, type CreateWorkerLoopGraphOptions } from './workerLoopGraph';
-
-type CreateCatalogToolLoopGraphOptions = Omit<
-  CreateWorkerLoopGraphOptions<WorkerTaskEnvelope, WorkerResult>,
-  'extractFinalResult' | 'renderHandoffMessage'
->;
 
 export function renderWorkerHandoffMessage(handoff: WorkerTaskEnvelope): string {
   return [
@@ -40,18 +34,10 @@ export function renderWorkerHandoffMessage(handoff: WorkerTaskEnvelope): string 
   ].join('\n');
 }
 
-function extractCatalogFinalResult(toolRun: ToolRun): WorkerResult | null {
+export function extractCatalogFinalResult(toolRun: ToolRun): WorkerResult | null {
   if (toolRun.toolName !== WORKER_RESULT_TOOL_NAME || toolRun.status !== 'completed' || toolRun.structured == null) {
     return null;
   }
 
   return normalizeWorkerResult(toolRun.structured);
-}
-
-export function createCatalogToolLoopGraph(options: CreateCatalogToolLoopGraphOptions) {
-  return createWorkerLoopGraph({
-    ...options,
-    renderHandoffMessage: renderWorkerHandoffMessage,
-    extractFinalResult: extractCatalogFinalResult,
-  });
 }

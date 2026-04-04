@@ -5,13 +5,10 @@ import {
   serializeExecutionResult,
   type ExecutionPlanEvent,
 } from '../../executionResult';
-import {
-  runInProgressPlanTaskAndSyncRuntime,
-  type PlannerExecutionToolPhase,
-} from '../../runtimePlan/runtimePlanService';
 import { type CatalogPlanningDeps } from '../../runtimePlan/planningDeps';
 import { toolReplyWithMetadata } from '../protocol';
 import { type CatalogToolCall, type CatalogToolExecutionResult } from '../types';
+import { executeInProgressPlanTask, type PlannerExecutionToolPhase } from '../../workers/executeInProgressPlanTask';
 
 export async function executePreparedPlanTask(params: {
   planningDeps: Pick<CatalogPlanningDeps, 'planningRuntime'>;
@@ -21,9 +18,8 @@ export async function executePreparedPlanTask(params: {
   phase: PlannerExecutionToolPhase;
   planEvent: ExecutionPlanEvent;
   executionSessionId: string;
-  revision: number;
 }): Promise<CatalogToolExecutionResult> {
-  const exec = await runInProgressPlanTaskAndSyncRuntime({
+  const exec = await executeInProgressPlanTask({
     planningDeps: params.planningDeps,
     runId: params.runId,
     workerRuns: params.workerRuns,
@@ -39,7 +35,6 @@ export async function executePreparedPlanTask(params: {
     phase: params.phase,
     planEvent: params.planEvent,
     executionSessionId: params.executionSessionId,
-    revision: params.revision,
     completedTaskId,
     plan: planAfterWorker,
     run,

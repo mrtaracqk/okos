@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { CATALOG_WORKER_ENTRIES, CATALOG_WORKER_KNOWLEDGE } from './catalogWorkerKnowledge';
-import { PLAN_WORKER_OWNERS, resolveCatalogWorkerId } from './contracts/catalogWorkerId';
+import { CATALOG_WORKER_ENTRIES, CATALOG_WORKER_KNOWLEDGE } from './specialists/specs';
+import { CATALOG_WORKER_IDS, resolveCatalogWorkerId } from '../../contracts/catalogExecutionOwners';
 
 describe('catalogWorkerKnowledge', () => {
   test('entries align with plan owners and knowledge map', () => {
-    expect(PLAN_WORKER_OWNERS.length === CATALOG_WORKER_ENTRIES.length).toBe(true);
+    expect(CATALOG_WORKER_IDS.length === CATALOG_WORKER_ENTRIES.length).toBe(true);
     for (const entry of CATALOG_WORKER_ENTRIES) {
-      expect(PLAN_WORKER_OWNERS.includes(entry.id)).toBe(true);
+      expect(CATALOG_WORKER_IDS.includes(entry.id)).toBe(true);
       expect(CATALOG_WORKER_KNOWLEDGE[entry.id].id).toBe(entry.id);
       expect(entry.ownershipRules.length).toBeGreaterThan(0);
       expect(entry.lookupRules.length).toBeGreaterThan(0);

@@ -7,7 +7,7 @@ import {
   formatTraceValue,
   runAgentSpan,
 } from '../../../../observability/traceContext';
-import { type CatalogWorkerDefinition } from '../../specialists/shared/workerDefinition';
+import { type CatalogWorkerDefinition } from '../../specialists/registry';
 import { type WorkerTaskEnvelope } from '../../contracts/workerRequest';
 import { type WorkerRun } from '../../contracts/workerRun';
 import {

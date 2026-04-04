@@ -1,5 +1,5 @@
+import { type CatalogWorkerId } from '../../../contracts/catalogExecutionOwners';
 import type { WorkerResult, WorkerResultStatus } from './workerResult';
-import { type CatalogWorkerId } from './catalogWorkerId';
 
 export type WorkerRunProtocolErrorCode = 'missing_report_worker_result' | 'invalid_report_worker_result';
 

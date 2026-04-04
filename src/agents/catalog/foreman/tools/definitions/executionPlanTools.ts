@@ -1,8 +1,8 @@
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { PLAN_WORKER_OWNERS } from '../../../contracts/catalogWorkerId';
+import { CATALOG_WORKER_IDS } from '../../../../../contracts/catalogExecutionOwners';
 
-const workerTaskOwnerSchema = z.enum(PLAN_WORKER_OWNERS);
+const workerTaskOwnerSchema = z.enum(CATALOG_WORKER_IDS);
 
 export const executionPlanContextSchema = z.object({
   goal: z.string().trim().min(1),
@@ -47,7 +47,7 @@ export const newExecutionPlanTool = tool(
   {
     name: 'new_execution_plan',
     description:
-      'Зафиксируй или полностью замени executable plan и запусти первую подзадачу (первая задача в списке становится in_progress). Передай общий planContext (goal/facts/constraints) для всего плана и step-local inputData у задач. Новый план всегда чистый: runtime сбросит artifacts от предыдущего плана. Если последний шаг уже успешен и следующий pending шаг можно выполнить с текущим execution result — не пересоздавай план, вызови approve_step. Tool result вернёт только JSON payload `catalog_execution_v2`; отдельного HumanMessage после вызова не будет.',
+      'Зафиксируй или полностью замени executable plan и запусти первую подзадачу (первая задача в списке становится in_progress). Передай общий planContext (goal/facts/constraints) для всего плана и step-local inputData у задач. Новый план всегда чистый: runtime сбросит artifacts от предыдущего плана. Если последний шаг уже успешен и следующий pending шаг можно выполнить с текущим execution result — не пересоздавай план, вызови approve_step. Tool result вернёт только JSON payload `catalog_execution_v3`; отдельного HumanMessage после вызова не будет.',
     schema: newExecutionPlanInputSchema,
   }
 );
@@ -59,7 +59,7 @@ export const approveStepTool = tool(
   {
     name: 'approve_step',
     description:
-      'Продолжить план после результата воркера: runtime переводит следующую pending задачу в работу и запускает её. Следующий воркер получит planContext текущего плана, step-local inputData своей задачи и upstreamArtifacts только от непосредственно предыдущего completed шага, если они были. Вызывай по умолчанию, если `next_action.tool=approve_step` и не нужно менять planContext/tasks. Чтобы обновить общий контекст плана или хвост шагов — new_execution_plan; чтобы закончить работу — finish_execution_plan. Tool result вернёт только JSON payload `catalog_execution_v2`; отдельного HumanMessage после вызова не будет.',
+      'Продолжить план после результата воркера: runtime переводит следующую pending задачу в работу и запускает её. Следующий воркер получит planContext текущего плана, step-local inputData своей задачи и upstreamArtifacts только от непосредственно предыдущего completed шага, если они были. Вызывай по умолчанию, если `next_step.tool=approve_step` и не нужно менять planContext/tasks. Чтобы обновить общий контекст плана или хвост шагов — new_execution_plan; чтобы закончить работу — finish_execution_plan. Tool result вернёт только JSON payload `catalog_execution_v3`; отдельного HumanMessage после вызова не будет.',
     schema: approveStepInputSchema,
   }
 );

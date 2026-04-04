@@ -1,4 +1,12 @@
-import { BaseMessage, HumanMessage, SystemMessage, ToolMessage, isAIMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  BaseMessage,
+  HumanMessage,
+  SystemMessage,
+  ToolMessage,
+  isAIMessage,
+} from '@langchain/core/messages';
+import { type ClientTool } from '@langchain/core/tools';
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import {
   addTraceEvent,
@@ -11,20 +19,26 @@ import {
   runToolSpan,
 } from '../../../../observability/traceContext';
 import { type ToolRun } from '../../../shared/toolRun';
+import { WORKER_RESULT_TOOL_NAME } from '../../contracts/workerResult';
 
 export type CreateWorkerLoopGraphOptions<Handoff = unknown, FinalResult = unknown> = {
-  model: any;
-  tools: any[];
+  model: WorkerLoopModel;
+  tools: WorkerTool[];
   systemPrompt: () => string;
-  finalToolNames?: string[];
   renderHandoffMessage?: (handoff: Handoff) => string;
   extractFinalResult?: (toolRun: ToolRun) => FinalResult | null;
 };
 
-type WorkerTool = {
-  name: string;
+type WorkerLoopRunnable = {
+  invoke(messages: BaseMessage[]): Promise<AIMessage>;
+};
+
+type WorkerLoopModel = {
+  bindTools(tools: WorkerTool[]): WorkerLoopRunnable;
+};
+
+type WorkerTool = ClientTool & {
   actualToolName?: string;
-  invoke: (input: Record<string, unknown>) => Promise<unknown>;
 };
 
 type ParsedToolCallArgs =
@@ -125,62 +139,6 @@ function serializeToolPayload(value: unknown): string {
   return safeSerialize(value) ?? String(value);
 }
 
-function padToLength(value: string, length: number): string {
-  if (value.length === length) return value;
-  if (value.length > length) return value.slice(0, length);
-  return value.padEnd(length, ' ');
-}
-
-/**
- * Compatibility shim for tool payloads:
- * Some tests (and earlier versions) expect `payload.content` to be present
- * when `payload.structured` looks like { text, description, nested: { notes } }.
- * We convert it into OpenAI-like content blocks without truncating below
- * the expected max chunk size.
- */
-function maybeAugmentToolPayloadWithContent(payload: unknown): unknown {
-  if (!isRecord(payload) || payload.ok !== true) return payload;
-
-  const structured = isRecord(payload.structured) ? payload.structured : null;
-  if (!structured || Object.prototype.hasOwnProperty.call(payload, 'content')) return payload;
-
-  const description = typeof structured.description === 'string' ? structured.description : null;
-  const notes =
-    isRecord(structured.nested) && typeof structured.nested.notes === 'string' ? structured.nested.notes : null;
-  const text = typeof structured.text === 'string' ? structured.text : null;
-
-  if (!description || !notes || !text) return payload;
-
-  const contentChunkSize = 360;
-  return {
-    ...payload,
-    content: [
-      {
-        type: 'resource',
-        resource: { description: padToLength(description + text, contentChunkSize) },
-      },
-      { type: 'text', text: padToLength(notes + text, contentChunkSize) },
-    ],
-  };
-}
-
-function extractCompactToolMessagePayload(value: unknown): unknown {
-  if (!isRecord(value) || value.ok === false) {
-    return value;
-  }
-
-  const structured = isRecord(value.structured) ? value.structured : null;
-  if (!structured || !Object.prototype.hasOwnProperty.call(structured, 'result')) {
-    return value;
-  }
-
-  return structured.result;
-}
-
-function serializeToolMessagePayload(value: unknown): string {
-  return serializeToolPayload(extractCompactToolMessagePayload(value));
-}
-
 function normalizeToolRun(toolName: string, args: Record<string, unknown>, payload: unknown): ToolRun {
   if (!isRecord(payload)) {
     return {
@@ -239,11 +197,32 @@ function buildFailedToolPayload(
   };
 }
 
+function buildIgnoredAfterFinalToolPayload(
+  toolName: string,
+  finalToolName: string,
+  rawArgs: unknown,
+  finalToolCallId?: string
+) {
+  return buildFailedToolPayload(
+    toolName,
+    `Protocol violation: tool "${toolName}" was ignored because final tool "${finalToolName}" was already called in the same model response.`,
+    'catalog-worker',
+    'protocol_error',
+    'ignored_after_final_tool',
+    {
+      ignored: true,
+      reason: 'final_tool_already_called',
+      finalToolName,
+      ...(finalToolCallId ? { finalToolCallId } : {}),
+      rawArgs,
+    }
+  );
+}
+
 export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>({
   model,
   tools,
   systemPrompt,
-  finalToolNames = [],
   renderHandoffMessage,
   extractFinalResult,
 }: CreateWorkerLoopGraphOptions<Handoff, FinalResult>) {
@@ -269,7 +248,7 @@ export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>(
     }),
   });
   const toolsByName = new Map<string, WorkerTool>(tools.map((tool) => [tool.name, tool]));
-  const finalToolNameSet = new Set(finalToolNames);
+  const finalToolNameSet = new Set([WORKER_RESULT_TOOL_NAME]);
 
   const agentNode = async (state: typeof WorkerLoopStateAnnotation.State) => {
     return runAgentSpan(
@@ -323,6 +302,10 @@ export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>(
     const toolRuns: ToolRun[] = [];
     const shouldExitAfterTools = lastMessage.tool_calls.some((toolCall) => finalToolNameSet.has(toolCall.name));
     let finalResultUpdate: FinalResult | null = null;
+    let firstFinalToolCall: {
+      name: string;
+      id: string;
+    } | null = null;
     for (const toolCall of lastMessage.tool_calls) {
       const toolCallId =
         typeof toolCall.id === 'string' && toolCall.id.length > 0
@@ -330,6 +313,58 @@ export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>(
           : typeof toolCall.name === 'string'
             ? toolCall.name
             : '';
+      const toolCallName = typeof toolCall.name === 'string' ? toolCall.name : 'unknown_tool';
+      const isFinalToolCall = toolCallName === WORKER_RESULT_TOOL_NAME;
+
+      if (firstFinalToolCall) {
+        const finalToolCall = firstFinalToolCall;
+        const parsedArgs = parseToolCallArgs(toolCall.args);
+        const payload = await runToolSpan(
+          'worker.tool_call',
+          async () =>
+            buildIgnoredAfterFinalToolPayload(
+              toolCallName,
+              finalToolCall.name,
+              parsedArgs.ok ? parsedArgs.args : toolCall.args,
+              finalToolCall.id
+            ),
+          {
+            attributes: {
+              ...buildTraceAttributes({
+                'tool.name': toolCallName,
+                'tool.call_id': toolCallId,
+                'tool.args': formatTraceValue(toolCall.args, 1000),
+                'tool.status': 'failed',
+                'tool.ignored': true,
+                'error.type': 'protocol_error',
+                'error.code': 'ignored_after_final_tool',
+                'error.retryable': false,
+              }),
+              ...buildTraceInputAttributes(toolCall.args, 1000),
+            },
+            statusMessage: () =>
+              `tool "${toolCallName}" ignored after final tool "${finalToolCall.name}" in the same model response`,
+          }
+        );
+        const normalizedRun = normalizeToolRun(toolCallName, parsedArgs.ok ? parsedArgs.args : {}, payload);
+        toolRuns.push(normalizedRun);
+        messages.push(
+          new ToolMessage({
+            tool_call_id: toolCallId,
+            name: toolCall.name,
+            content: serializeToolPayload(payload),
+          })
+        );
+        continue;
+      }
+
+      if (isFinalToolCall) {
+        firstFinalToolCall = {
+          name: toolCallName,
+          id: toolCallId,
+        };
+      }
+
       const parsedArgs = parseToolCallArgs(toolCall.args);
       const args = parsedArgs.args;
 
@@ -370,7 +405,7 @@ export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>(
           new ToolMessage({
             tool_call_id: toolCallId,
             name: toolCall.name,
-            content: serializeToolMessagePayload(payload),
+            content: serializeToolPayload(payload),
           })
         );
         continue;
@@ -407,7 +442,7 @@ export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>(
           new ToolMessage({
             tool_call_id: toolCallId,
             name: toolCall.name,
-            content: serializeToolMessagePayload(payload),
+            content: serializeToolPayload(payload),
           })
         );
         continue;
@@ -416,39 +451,34 @@ export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>(
       const toolName = typeof tool.actualToolName === 'string' ? tool.actualToolName : toolCall.name;
 
       try {
-        const payload = await runToolSpan(
-          'worker.tool_call',
-          async () => tool.invoke(args),
-          {
-            attributes: {
+        const payload = await runToolSpan('worker.tool_call', async () => tool.invoke(args), {
+          attributes: {
+            ...buildTraceAttributes({
+              'tool.name': toolName,
+              'tool.call_id': toolCallId,
+              'tool.args': formatTraceValue(args, 1000),
+            }),
+            ...buildTraceInputAttributes(args, 1000),
+          },
+          mapResultAttributes: (result) => {
+            const normalizedRun = normalizeToolRun(toolName, args, result);
+            return {
               ...buildTraceAttributes({
-                'tool.name': toolName,
-                'tool.call_id': toolCallId,
-                'tool.args': formatTraceValue(args, 1000),
+                'tool.status': normalizedRun.status,
+                'error.source': normalizedRun.error?.source,
+                'error.type': normalizedRun.error?.type,
+                'error.code': normalizedRun.error?.code,
+                'error.retryable': normalizedRun.error?.retryable,
               }),
-              ...buildTraceInputAttributes(args, 1000),
-            },
-            mapResultAttributes: (result) => {
-              const normalizedRun = normalizeToolRun(toolName, args, result);
-              return {
-                ...buildTraceAttributes({
-                  'tool.status': normalizedRun.status,
-                  'error.source': normalizedRun.error?.source,
-                  'error.type': normalizedRun.error?.type,
-                  'error.code': normalizedRun.error?.code,
-                  'error.retryable': normalizedRun.error?.retryable,
-                }),
-                ...buildTraceOutputAttributes(normalizedRun.structured, 1200),
-              };
-            },
-            statusMessage: (result) => {
-              const normalizedRun = normalizeToolRun(toolName, args, result);
-              return normalizedRun.status === 'failed' ? normalizedRun.error?.message : undefined;
-            },
-          }
-        );
-        const payloadWithContent = maybeAugmentToolPayloadWithContent(payload);
-        const normalizedRun = normalizeToolRun(toolName, args, payloadWithContent);
+              ...buildTraceOutputAttributes(normalizedRun.structured, 1200),
+            };
+          },
+          statusMessage: (result) => {
+            const normalizedRun = normalizeToolRun(toolName, args, result);
+            return normalizedRun.status === 'failed' ? normalizedRun.error?.message : undefined;
+          },
+        });
+        const normalizedRun = normalizeToolRun(toolName, args, payload);
         toolRuns.push(normalizedRun);
         if (extractFinalResult) {
           const extractedFinalResult = extractFinalResult(normalizedRun);
@@ -460,7 +490,7 @@ export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>(
           new ToolMessage({
             tool_call_id: toolCallId,
             name: toolCall.name,
-            content: serializeToolMessagePayload(payloadWithContent),
+            content: serializeToolPayload(payload),
           })
         );
       } catch (error) {
@@ -472,7 +502,7 @@ export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>(
           new ToolMessage({
             tool_call_id: toolCallId,
             name: toolCall.name,
-            content: serializeToolMessagePayload(payload),
+            content: serializeToolPayload(payload),
           })
         );
       }
