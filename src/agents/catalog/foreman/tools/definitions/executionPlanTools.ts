@@ -1,8 +1,14 @@
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { PLAN_WORKER_OWNERS } from '../catalogWorkerKnowledge';
+import { PLAN_WORKER_OWNERS } from '../../../contracts/catalogWorkerId';
 
 const workerTaskOwnerSchema = z.enum(PLAN_WORKER_OWNERS);
+
+export const executionPlanContextSchema = z.object({
+  goal: z.string().trim().min(1),
+  facts: z.array(z.string()).default([]),
+  constraints: z.array(z.string()).default([]),
+});
 
 export const executableTaskInputSchema = z.object({
   taskId: z.string(),
@@ -17,6 +23,7 @@ export const executableTaskInputSchema = z.object({
 });
 
 export const newExecutionPlanInputSchema = z.object({
+  planContext: executionPlanContextSchema,
   tasks: z.array(executableTaskInputSchema).min(1),
 });
 
@@ -29,7 +36,7 @@ export const finishExecutionPlanInputSchema = z.object({
   summary: z.string().trim().min(1),
 });
 
-// NOTE: execution is implemented in `toolDispatcher.ts` (see executeCatalogToolCall switch).
+// NOTE: execution is implemented in `tools/dispatcher.ts` (see executeCatalogToolCall switch).
 export const newExecutionPlanTool = tool(
   async () => {
     return {
@@ -40,7 +47,7 @@ export const newExecutionPlanTool = tool(
   {
     name: 'new_execution_plan',
     description:
-      'Зафиксируй или полностью замени executable snapshot плана и запусти первую подзадачу (первая задача в списке становится in_progress). Используй, когда нужно изменить список шагов или execution (facts/constraints) для будущих задач. Если последний шаг уже успешен и следующий pending шаг можно выполнить с текущим snapshot — не пересоздавай план, вызови approve_step. После вызова придёт короткий ToolMessage и отдельное HumanMessage с итогом подзадачи — по ним выбирай approve_step, new_execution_plan или finish_execution_plan.',
+      'Зафиксируй или полностью замени executable snapshot плана и запусти первую подзадачу (первая задача в списке становится in_progress). Передай общий planContext (goal/facts/constraints) для всего плана и step-local inputData у задач. Новый план всегда чистый: runtime сбросит artifacts от предыдущего плана. Если последний шаг уже успешен и следующий pending шаг можно выполнить с текущим snapshot — не пересоздавай план, вызови approve_step. Tool result уже содержит актуальный Execution Snapshot; отдельного HumanMessage после вызова не будет.',
     schema: newExecutionPlanInputSchema,
   }
 );
@@ -52,7 +59,7 @@ export const approveStepTool = tool(
   {
     name: 'approve_step',
     description:
-      'Продолжить план после результата воркера: runtime переводит следующую pending задачу в работу и запускает её. Входные данные берутся только из snapshot плана (execution у задачи); facts из предыдущего шага в следующий не подставляются автоматически. Вызывай по умолчанию, если последняя завершённая подзадача успешна (completed) и менять tasks[] не нужно. Чтобы обновить хвост или facts для следующих шагов — new_execution_plan; чтобы закончить работу — finish_execution_plan. После вызова — короткий ToolMessage и отдельное HumanMessage с итогом шага.',
+      'Продолжить план после результата воркера: runtime переводит следующую pending задачу в работу и запускает её. Следующий воркер получит planContext текущего плана, step-local inputData своей задачи и upstreamArtifacts только от непосредственно предыдущего completed шага, если они были. Вызывай по умолчанию, если последний успешный шаг не требует менять planContext/tasks. Чтобы обновить общий контекст плана или хвост шагов — new_execution_plan; чтобы закончить работу — finish_execution_plan. Tool result уже содержит обновлённый Execution Snapshot; отдельного HumanMessage после вызова не будет.',
     schema: approveStepInputSchema,
   }
 );

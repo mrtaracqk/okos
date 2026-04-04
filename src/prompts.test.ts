@@ -12,6 +12,10 @@ describe('catalog prompts stage 4-5', () => {
     expect(prompt).toContain('если конечный шаг — создать товар или обновить его categories, сначала product-worker');
     expect(prompt).toContain('Если конечный шаг — создать, найти или обновить конкретную variation, сначала variation-worker');
     expect(prompt).toContain('Не разбивай её на микрошаги вроде «найди category_id»');
+    expect(prompt).toContain('**Artifacts** из последнего успешного шага runtime может передать только в **следующий** шаг как `upstreamArtifacts`.');
+    expect(prompt).toContain('planContext');
+    expect(prompt).toContain('Execution Snapshot');
+    expect(prompt).not.toContain('structured payload WORKER_RESULT');
   });
 
   test('renders product-worker prompt with explicit ownership, lookup and blocker guardrails', () => {
@@ -28,6 +32,7 @@ describe('catalog prompts stage 4-5', () => {
     expect(prompt).toContain(
       'Рабочий порядок: 1) если входа уже достаточно, выполняй свой шаг; 2) если не хватает только подтверждения id/сущности'
     );
+    expect(prompt).toContain('Если во входе есть `upstreamArtifacts`, считай их machine-readable контекстом от предыдущего шага');
     expect(prompt).toContain('Lookup не раскрывай в отдельный workflow по созданию taxonomy, категорий, parent product или variation.');
     expect(prompt).toContain('## Зона Ответственности');
     expect(prompt).toContain('## Lookup И Research');
@@ -58,7 +63,7 @@ describe('catalog prompts stage 4-5', () => {
 
     expect(prompt).toContain('### Неточные пользовательские формулировки');
     expect(prompt).toContain(
-      'Пользователь часто формулирует запрос по-человечески: без id, с неполными или неточными названиями.'
+      'Пользователь часто формулирует запрос по-человечески: без id, с неполными или неточными названиями, не зная технических особенностей.'
     );
     expect(prompt).toContain('Считай это нормой и сам выясняй нужные сущности по контексту и через доступные lookup/read.');
     expect(prompt).toContain('Пользователь прислал ссылку на товар вместо id');

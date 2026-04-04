@@ -1,10 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  CATALOG_WORKER_ENTRIES,
-  CATALOG_WORKER_KNOWLEDGE,
-  PLAN_WORKER_OWNERS,
-} from './catalogWorkerKnowledge';
-import { resolveCatalogWorkerId } from './contracts/catalogWorkerId';
+import { CATALOG_WORKER_ENTRIES, CATALOG_WORKER_KNOWLEDGE } from './catalogWorkerKnowledge';
+import { PLAN_WORKER_OWNERS, resolveCatalogWorkerId } from './contracts/catalogWorkerId';
 
 describe('catalogWorkerKnowledge', () => {
   test('entries align with plan owners and knowledge map', () => {
@@ -29,6 +25,9 @@ describe('catalogWorkerKnowledge', () => {
     );
     expect(CATALOG_WORKER_KNOWLEDGE['product-worker'].ownershipRules).toContain(
       'На уже существующем товаре attributes/default_attributes меняй только через products_append_attribute и products_remove_attribute, не через products_update.'
+    );
+    expect(CATALOG_WORKER_KNOWLEDGE['product-worker'].lookupRules).toContain(
+      'Если во входе есть permalink или URL товара, передавай url в products_list: tool сам извлечёт slug и выполнит точный lookup по slug.'
     );
     expect(CATALOG_WORKER_KNOWLEDGE['product-worker'].lookupRules).toContain(
       'Lookup нужен только чтобы снять неопределённость перед твоим действием; не превращай его в самостоятельный workflow по созданию taxonomy, категорий или variation.'

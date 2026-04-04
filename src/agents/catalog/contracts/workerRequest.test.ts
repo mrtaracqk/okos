@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import {
   buildWorkerInput,
-  buildWorkerInputFromEnvelope,
   parseHandoffArgsToEnvelope,
   toWorkerTaskEnvelope,
   type WorkerRequest,
-  type WorkerTaskEnvelope,
 } from './workerRequest';
 
 describe('workerRequests', () => {
@@ -30,56 +28,71 @@ describe('workerRequests', () => {
     );
   });
 
-  it('converts WorkerRequest to WorkerTaskEnvelope and renders same text via buildWorkerInputFromEnvelope', () => {
+  it('converts WorkerRequest to WorkerTaskEnvelope', () => {
     const request: WorkerRequest = {
       whatToDo: 'Создай товар "iPhone 17".',
       whyNow: 'Для продолжения обработки нужен product_id.',
       whatToReturn: '- status\n- product_id',
     };
     const envelope = toWorkerTaskEnvelope(request);
-    expect(envelope.objective).toBe('Создай товар "iPhone 17".');
-    expect(envelope.facts).toEqual([]);
-    expect(envelope.expectedOutput).toBe('- status\n- product_id');
-    expect(envelope.contextNotes).toBe('Для продолжения обработки нужен product_id.');
-    expect(buildWorkerInputFromEnvelope(envelope)).toBe(buildWorkerInput(request));
-  });
-
-  it('buildWorkerInputFromEnvelope uses facts for data block', () => {
-    const envelope: WorkerTaskEnvelope = {
-      objective: 'Проверь наличие полей.',
-      facts: ['Тип: simple', 'Категория: 17'],
+    expect(envelope.planContext).toEqual({
+      goal: 'Для продолжения обработки нужен product_id.',
+      facts: [],
       constraints: [],
-      expectedOutput: 'status, data, missingData',
-      contextNotes: 'Нужно без предположений.',
-    };
-    const text = buildWorkerInputFromEnvelope(envelope);
-    expect(text).toContain('Данные для выполнения:\nТип: simple\nКатегория: 17');
+    });
+    expect(envelope.taskInput).toEqual({
+      objective: 'Создай товар "iPhone 17".',
+      facts: [],
+      constraints: [],
+      expectedOutput: '- status\n- product_id',
+      contextNotes: 'Для продолжения обработки нужен product_id.',
+    });
+    expect(envelope.upstreamArtifacts).toBeUndefined();
   });
 
   describe('parseHandoffArgsToEnvelope', () => {
     it('parses envelope-shaped tool args into WorkerTaskEnvelope', () => {
       const envelope = parseHandoffArgsToEnvelope({
+        planGoal: 'Найти и обновить товар',
+        planFacts: 'shop=onlyphones\nrequest=lookup',
+        planConstraints: 'Не создавать новые сущности',
         objective: 'Создай товар "iPhone 17".',
         facts: 'Тип: simple\nКатегория: 17',
+        upstreamArtifacts: [{ product_id: 101 }],
         expectedOutput: '- status\n- product_id',
         contextNotes: 'Для продолжения нужен product_id.',
       });
-      expect(envelope.objective).toBe('Создай товар "iPhone 17".');
-      expect(envelope.facts).toEqual(['Тип: simple', 'Категория: 17']);
-      expect(envelope.constraints).toEqual([]);
-      expect(envelope.expectedOutput).toBe('- status\n- product_id');
-      expect(envelope.contextNotes).toBe('Для продолжения нужен product_id.');
+      expect(envelope.planContext).toEqual({
+        goal: 'Найти и обновить товар',
+        facts: ['shop=onlyphones', 'request=lookup'],
+        constraints: ['Не создавать новые сущности'],
+      });
+      expect(envelope.taskInput).toEqual({
+        objective: 'Создай товар "iPhone 17".',
+        facts: ['Тип: simple', 'Категория: 17'],
+        constraints: [],
+        expectedOutput: '- status\n- product_id',
+        contextNotes: 'Для продолжения нужен product_id.',
+      });
+      expect(envelope.upstreamArtifacts).toEqual([{ product_id: 101 }]);
     });
 
     it('trims and splits facts/constraints by newlines', () => {
       const envelope = parseHandoffArgsToEnvelope({
+        planGoal: '  Goal ',
         objective: 'Task',
         expectedOutput: 'Out',
+        planFacts: '  global a  \n\n  global b  ',
         facts: '  a  \n\n  b  \n  c  ',
         constraints: ' one \n two ',
       });
-      expect(envelope.facts).toEqual(['a', 'b', 'c']);
-      expect(envelope.constraints).toEqual(['one', 'two']);
+      expect(envelope.planContext).toEqual({
+        goal: 'Goal',
+        facts: ['global a', 'global b'],
+        constraints: [],
+      });
+      expect(envelope.taskInput.facts).toEqual(['a', 'b', 'c']);
+      expect(envelope.taskInput.constraints).toEqual(['one', 'two']);
     });
   });
 });

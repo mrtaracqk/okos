@@ -3,8 +3,9 @@ import {
   PLAN_TASK_STATUSES,
   type PlanTaskOwner,
   type PlanTaskStatus,
-  type PlanningProjectionAdapter,
+  type PlanningChannelAdapter,
   type RuntimePlan,
+  type RuntimePlanContext,
   type RuntimePlanCreateInput,
   type RuntimePlanTask,
   type RuntimePlanUpdateInput,
@@ -31,12 +32,15 @@ export function isPlanningRuntimeError(error: unknown): error is PlanningRuntime
 }
 
 type PlanningCoreOptions = {
-  channelAdapter?: PlanningProjectionAdapter;
-  now?: () => Date;
+  channelAdapter?: PlanningChannelAdapter;
 };
 
 const planTaskOwners = new Set<PlanTaskOwner>(PLAN_TASK_OWNERS);
 const planTaskStatuses = new Set<PlanTaskStatus>(PLAN_TASK_STATUSES);
+
+function cloneArtifacts(artifacts: unknown[]): unknown[] {
+  return [...artifacts];
+}
 
 function cloneTask(task: RuntimePlanTask): RuntimePlanTask {
   return {
@@ -45,18 +49,34 @@ function cloneTask(task: RuntimePlanTask): RuntimePlanTask {
     owner: task.owner,
     status: task.status,
     ...(task.notes ? { notes: task.notes } : {}),
-    ...(task.execution ? { execution: { ...task.execution } } : {}),
+    ...(task.execution
+      ? {
+          execution: {
+            ...task.execution,
+            facts: [...task.execution.facts],
+            constraints: [...task.execution.constraints],
+          },
+        }
+      : {}),
+  };
+}
+
+function clonePlanContext(planContext: RuntimePlanContext): RuntimePlanContext {
+  return {
+    goal: planContext.goal,
+    facts: [...planContext.facts],
+    constraints: [...planContext.constraints],
   };
 }
 
 function clonePlan(plan: RuntimePlan): RuntimePlan {
   return {
-    ...plan,
+    runId: plan.runId,
+    chatId: plan.chatId,
+    status: plan.status,
+    planContext: clonePlanContext(plan.planContext),
     tasks: plan.tasks.map(cloneTask),
-    createdAt: new Date(plan.createdAt),
-    updatedAt: new Date(plan.updatedAt),
-    ...(plan.completedAt ? { completedAt: new Date(plan.completedAt) } : {}),
-    ...(plan.startedAt ? { startedAt: new Date(plan.startedAt) } : {}),
+    ...(plan.nextStepArtifacts !== undefined ? { nextStepArtifacts: cloneArtifacts(plan.nextStepArtifacts) } : {}),
   };
 }
 
@@ -74,25 +94,50 @@ function normalizeOptionalText(value: string | undefined) {
   return normalized ? normalized : undefined;
 }
 
+function normalizeTextList(value: unknown, fieldPath: string) {
+  if (!Array.isArray(value)) {
+    throw new PlanningRuntimeError('planning_invalid', `${fieldPath} must be an array of strings.`);
+  }
+
+  return value.map((item) => normalizeOptionalText(typeof item === 'string' ? item : undefined) ?? '').filter(Boolean);
+}
+
+function normalizePlanContext(planContext: RuntimePlanContext, fieldPath: string): RuntimePlanContext {
+  if (!planContext || typeof planContext !== 'object') {
+    throw new PlanningRuntimeError('planning_invalid', `Поле ${fieldPath} обязательно.`);
+  }
+
+  return {
+    goal: normalizeText(planContext.goal, `${fieldPath}.goal`),
+    facts: normalizeTextList(planContext.facts, `${fieldPath}.facts`),
+    constraints: normalizeTextList(planContext.constraints, `${fieldPath}.constraints`),
+  };
+}
+
+function normalizeArtifacts(value: unknown, fieldPath: string): unknown[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new PlanningRuntimeError('planning_invalid', `${fieldPath} must be an array when present.`);
+  }
+
+  return cloneArtifacts(value);
+}
+
 function normalizeExecution(execution: RuntimePlanTask['execution'], fieldPath: string) {
   if (!execution) return undefined;
 
   const objective = normalizeText(execution.objective, `${fieldPath}.objective`);
   const expectedOutput = normalizeText(execution.expectedOutput, `${fieldPath}.expectedOutput`);
 
-  if (!Array.isArray(execution.facts) || !Array.isArray(execution.constraints)) {
-    throw new PlanningRuntimeError('planning_invalid', `${fieldPath} must contain arrays facts/constraints.`);
-  }
-
-  const facts = execution.facts.map((s, i) => normalizeOptionalText(s) ?? '').filter(Boolean);
-  const constraints = execution.constraints.map((s, i) => normalizeOptionalText(s) ?? '').filter(Boolean);
-
   const contextNotes = normalizeOptionalText(execution.contextNotes);
 
   return {
     objective,
-    facts,
-    constraints,
+    facts: normalizeTextList(execution.facts, `${fieldPath}.facts`),
+    constraints: normalizeTextList(execution.constraints, `${fieldPath}.constraints`),
     expectedOutput,
     contextNotes,
   };
@@ -156,12 +201,11 @@ function validateTasks(tasks: RuntimePlanTask[]) {
 
 export class PlanningCore {
   private readonly plans = new Map<string, RuntimePlan>();
-  private readonly channelAdapter?: PlanningProjectionAdapter;
-  private readonly now: () => Date;
+  private readonly channelAdapter?: PlanningChannelAdapter;
+  private readonly channelMessageIds = new Map<string, number>();
 
   constructor(options: PlanningCoreOptions = {}) {
     this.channelAdapter = options.channelAdapter;
-    this.now = options.now ?? (() => new Date());
   }
 
   async createPlan(input: RuntimePlanCreateInput): Promise<RuntimePlan> {
@@ -173,17 +217,14 @@ export class PlanningCore {
       );
     }
 
-    const createdAt = this.now();
     const plan: RuntimePlan = {
       runId: normalizeText(input.runId, 'runId'),
       chatId: input.chatId,
       status: 'active',
+      planContext: normalizePlanContext(input.planContext, 'planContext'),
       tasks: validateTasks(input.tasks),
-      createdAt,
-      updatedAt: createdAt,
-      ...(input.startedAt ? { startedAt: new Date(input.startedAt) } : {}),
-      ...(normalizeOptionalText(input.requestText)
-        ? { requestText: normalizeOptionalText(input.requestText) }
+      ...(input.nextStepArtifacts !== undefined
+        ? { nextStepArtifacts: normalizeArtifacts(input.nextStepArtifacts, 'nextStepArtifacts') }
         : {}),
     };
 
@@ -197,6 +238,7 @@ export class PlanningCore {
       await this.publishPlan(plan);
     } catch (error) {
       this.plans.delete(plan.runId);
+      this.channelMessageIds.delete(plan.runId);
       throw error;
     }
 
@@ -206,7 +248,17 @@ export class PlanningCore {
   async updatePlan(input: RuntimePlanUpdateInput): Promise<RuntimePlan> {
     const plan = this.getRequiredActivePlan(input.runId);
     plan.tasks = validateTasks(input.tasks);
-    plan.updatedAt = this.now();
+    if (Object.prototype.hasOwnProperty.call(input, 'planContext')) {
+      plan.planContext = normalizePlanContext(input.planContext as RuntimePlanContext, 'planContext');
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'nextStepArtifacts')) {
+      const nextStepArtifacts = normalizeArtifacts(input.nextStepArtifacts, 'nextStepArtifacts');
+      if (nextStepArtifacts !== undefined) {
+        plan.nextStepArtifacts = nextStepArtifacts;
+      } else {
+        delete plan.nextStepArtifacts;
+      }
+    }
 
     await this.publishPlan(plan);
     return clonePlan(plan);
@@ -223,23 +275,31 @@ export class PlanningCore {
     }
 
     plan.status = 'completed';
-    plan.updatedAt = this.now();
-    plan.completedAt = new Date(plan.updatedAt);
-
-    if (plan.telegramMessageId && this.channelAdapter) {
-      await this.channelAdapter.deletePlan(clonePlan(plan));
+    const messageId = this.channelMessageIds.get(runId);
+    try {
+      if (typeof messageId === 'number' && this.channelAdapter) {
+        await this.channelAdapter.deletePlan(clonePlan(plan), messageId);
+      }
+    } catch (error) {
+      plan.status = 'active';
+      throw error;
     }
+    this.channelMessageIds.delete(runId);
 
     return clonePlan(plan);
   }
 
   async failPlan(runId: string): Promise<RuntimePlan> {
     const plan = this.getRequiredActivePlan(runId);
+    const previousStatus = plan.status;
     plan.status = 'failed';
-    plan.updatedAt = this.now();
-    plan.completedAt = new Date(plan.updatedAt);
 
-    await this.publishPlan(plan);
+    try {
+      await this.publishPlan(plan);
+    } catch (error) {
+      plan.status = previousStatus;
+      throw error;
+    }
     return clonePlan(plan);
   }
 
@@ -263,10 +323,14 @@ export class PlanningCore {
       return;
     }
 
+    const previousStatus = plan.status;
     plan.status = 'abandoned';
-    plan.updatedAt = this.now();
-    plan.completedAt = new Date(plan.updatedAt);
-    await this.publishPlan(plan);
+    try {
+      await this.publishPlan(plan);
+    } catch (error) {
+      plan.status = previousStatus;
+      throw error;
+    }
   }
 
   private getRequiredActivePlan(runId: string) {
@@ -291,15 +355,15 @@ export class PlanningCore {
     }
 
     const planSnapshot = clonePlan(plan);
-    if (plan.telegramMessageId) {
-      await this.channelAdapter.updatePlan(planSnapshot);
+    const messageId = this.channelMessageIds.get(plan.runId);
+    if (typeof messageId === 'number') {
+      await this.channelAdapter.updatePlan(planSnapshot, messageId);
       return;
     }
 
-    const messageRef = await this.channelAdapter.sendPlan(planSnapshot);
-    if (messageRef?.messageId) {
-      plan.telegramMessageId = messageRef.messageId;
+    const nextMessageId = await this.channelAdapter.sendPlan(planSnapshot);
+    if (typeof nextMessageId === 'number') {
+      this.channelMessageIds.set(plan.runId, nextMessageId);
     }
   }
 }
-

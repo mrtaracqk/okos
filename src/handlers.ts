@@ -44,7 +44,7 @@ async function deliverAssistantTelegramText(chatId: number, text: string): Promi
 
 export async function handleMessage(chatId: number, text: string) {
   const requestContext = getTelegramRequestContext();
-  const runConfig = createGraphRunConfig(chatId, text);
+  const runConfig = createGraphRunConfig(chatId);
   const runThreadId =
     typeof runConfig.configurable?.thread_id === 'string' ? runConfig.configurable.thread_id : undefined;
   const traceContext = buildTelegramTraceContext({

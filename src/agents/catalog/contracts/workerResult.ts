@@ -1,7 +1,7 @@
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { type ToolRun } from '../../shared/toolLoopGraph';
 import { CATALOG_WORKER_IDS, type CatalogWorkerId } from './catalogWorkerId';
+import { type ToolRun } from '../../shared/toolRun';
 
 export const WORKER_RESULT_TOOL_NAME = 'report_worker_result';
 

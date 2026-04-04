@@ -1,15 +1,23 @@
 import { describe, expect, test } from 'bun:test';
-import { type RuntimePlan } from '../../../runtime/planning/types';
-import { getCatalogForemanToolNames } from './plannerToolAvailability';
+import { type RuntimePlan } from '../../../../runtime/planning/types';
+import {
+  catalogForemanToolRegistry,
+  getCatalogForemanToolNames,
+  resolveCatalogForemanToolRegistration,
+  sequencedCatalogForemanToolNames,
+} from './availability';
 
 function buildActivePlan(taskStatuses: RuntimePlan['tasks']) {
   return {
     runId: 'run-1',
     chatId: 1,
     status: 'active',
+    planContext: {
+      goal: 'Проверить каталог',
+      facts: [],
+      constraints: [],
+    },
     tasks: taskStatuses,
-    createdAt: new Date('2026-01-01T00:00:00.000Z'),
-    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
   } satisfies RuntimePlan;
 }
 
@@ -83,5 +91,20 @@ describe('getCatalogForemanToolNames', () => {
       'new_execution_plan',
       'finish_execution_plan',
     ]);
+  });
+
+  test('registry dispatch and sequencing stay aligned', () => {
+    const availableBeforePlan = getCatalogForemanToolNames(null);
+
+    expect(availableBeforePlan).toEqual(
+      catalogForemanToolRegistry
+        .filter((registration) => registration.isAvailable(null))
+        .map((registration) => registration.name)
+    );
+    expect(resolveCatalogForemanToolRegistration('approve_step')?.sequenced).toBe(true);
+    expect(resolveCatalogForemanToolRegistration('inspect_catalog_playbook')?.sequenced).toBe(false);
+    expect(sequencedCatalogForemanToolNames).toEqual(
+      new Set(['new_execution_plan', 'approve_step', 'finish_execution_plan'])
+    );
   });
 });

@@ -25,30 +25,27 @@ const runtimePlanTaskSchema = z.object({
     .optional(),
 });
 
+const runtimePlanContextSchema = z.object({
+  goal: z.string(),
+  facts: z.array(z.string()).default([]),
+  constraints: z.array(z.string()).default([]),
+});
+
 export const manageExecutionPlanInputSchema = z.object({
   action: z.enum(['create', 'update', 'complete', 'fail']),
+  planContext: runtimePlanContextSchema.optional(),
   tasks: z.array(runtimePlanTaskSchema).optional(),
+  nextStepArtifacts: z.array(z.unknown()).optional(),
 });
 
 type PlanningRunContext = {
   runId: string;
   chatId: number;
-  startedAt?: Date;
-  requestText?: string;
 };
 
 const planningRuntime = new PlanningCore({
   channelAdapter: new TelegramPlanningAdapter(),
 });
-
-function parseOptionalDate(value: unknown) {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-
-  const parsedDate = new Date(value);
-  return Number.isNaN(parsedDate.getTime()) ? undefined : parsedDate;
-}
 
 export function getPlanningRunContext(): PlanningRunContext | null {
   const config = getConfig();
@@ -63,8 +60,6 @@ export function getPlanningRunContext(): PlanningRunContext | null {
   return {
     runId,
     chatId,
-    startedAt: parseOptionalDate(configurable.startedAt),
-    requestText: typeof configurable.requestText === 'string' ? configurable.requestText : undefined,
   };
 }
 
@@ -90,16 +85,16 @@ export const manageExecutionPlanTool = tool(
     try {
       switch (input.action) {
         case 'create': {
-          if (!input.tasks) {
-            return formatPlanningError('Для action="create" нужен полный снимок tasks.');
+          if (!input.tasks || !input.planContext) {
+            return formatPlanningError('Для action="create" нужны planContext и полный снимок tasks.');
           }
 
           const plan = await planningRuntime.createPlan({
             runId: runtimeContext.runId,
             chatId: runtimeContext.chatId,
+            planContext: input.planContext,
             tasks: input.tasks,
-            startedAt: runtimeContext.startedAt,
-            requestText: runtimeContext.requestText,
+            nextStepArtifacts: input.nextStepArtifacts,
           });
 
           return formatPlanMutationResult(`Создан план с количеством задач: ${plan.tasks.length}.`);
@@ -112,6 +107,10 @@ export const manageExecutionPlanTool = tool(
           const plan = await planningRuntime.updatePlan({
             runId: runtimeContext.runId,
             tasks: input.tasks,
+            ...(input.planContext ? { planContext: input.planContext } : {}),
+            ...(Object.prototype.hasOwnProperty.call(input, 'nextStepArtifacts')
+              ? { nextStepArtifacts: input.nextStepArtifacts }
+              : {}),
           });
 
           return formatPlanMutationResult(`Снимок плана заменён. Активных задач: ${plan.tasks.length}.`);
@@ -140,4 +139,3 @@ export const manageExecutionPlanTool = tool(
     schema: manageExecutionPlanInputSchema,
   }
 );
-

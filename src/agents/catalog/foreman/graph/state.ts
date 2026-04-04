@@ -1,14 +1,12 @@
 import { BaseMessage } from '@langchain/core/messages';
 import { Annotation } from '@langchain/langgraph';
-import { type WorkerRun } from '../contracts/workerRun';
-import { type WorkerResultEnvelope } from '../contracts/workerResult';
+import { type WorkerRun } from '../../contracts/workerRun';
+import { type ExecutionSnapshot } from '../executionSnapshot';
+import { type CatalogToolCall } from '../tools/types';
 
-export type CatalogForemanRoute = 'dispatchTools' | 'plannerLimitFallback' | 'finalize';
-
-/** Initial delegation context; set once from the first user message. */
-export type CatalogRequestContext = {
-  initialPrompt: string;
-};
+export type CatalogPlannerRoute = 'dispatchTools' | 'plannerLimitFallback' | 'finalize';
+export type CatalogPostDispatchRoute = 'planner' | 'finalize';
+export type CatalogForemanRoute = CatalogPlannerRoute | CatalogPostDispatchRoute;
 
 export const CatalogGraphStateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
@@ -18,18 +16,8 @@ export const CatalogGraphStateAnnotation = Annotation.Root({
     reducer: (_, newWorkerRuns) => newWorkerRuns,
     default: () => [],
   }),
-  /** Last worker result envelope (e.g. trace attrs); planner decisions use HumanMessage step narratives. */
-  latestWorkerResult: Annotation<WorkerResultEnvelope | null>({
-    reducer: (_, newValue) => newValue,
-    default: () => null,
-  }),
-  /** Aggregated worker artifacts (no reader in graph today). */
-  workerArtifacts: Annotation<unknown[]>({
-    reducer: (_, newValue) => newValue,
-    default: () => [],
-  }),
-  /** Initial request context; set once at first planner turn. */
-  requestContext: Annotation<CatalogRequestContext | null>({
+  // Authoritative execution state for any active runtime plan. Active plan without this snapshot is a protocol error.
+  activeExecutionSnapshot: Annotation<ExecutionSnapshot | null>({
     reducer: (_, newValue) => newValue,
     default: () => null,
   }),
@@ -37,7 +25,7 @@ export const CatalogGraphStateAnnotation = Annotation.Root({
     reducer: (_, newValue) => newValue,
     default: () => 0,
   }),
-  pendingToolCalls: Annotation<any[]>({
+  pendingToolCalls: Annotation<CatalogToolCall[]>({
     reducer: (_, newValue) => newValue,
     default: () => [],
   }),
@@ -54,3 +42,5 @@ export const CatalogGraphStateAnnotation = Annotation.Root({
     default: () => null,
   }),
 });
+
+export type CatalogGraphState = typeof CatalogGraphStateAnnotation.State;

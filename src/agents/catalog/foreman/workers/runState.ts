@@ -1,6 +1,6 @@
-import { type ToolRun } from '../../shared/toolLoopGraph';
-import { type WorkerRun } from '../contracts/workerRun';
-import { WORKER_RESULT_TOOL_NAME, type WorkerResultStatus } from '../contracts/workerResult';
+import { type ToolRun } from '../../../shared/toolRun';
+import { type WorkerRun } from '../../contracts/workerRun';
+import { type WorkerResultEnvelope, WorkerResultStatus, WORKER_RESULT_TOOL_NAME } from '../../contracts/workerResult';
 
 export function getWorkerFailure(toolRuns: ToolRun[]) {
   for (let index = toolRuns.length - 1; index >= 0; index -= 1) {
@@ -21,6 +21,17 @@ export function getLastFailedWorker(workerRuns: WorkerRun[]) {
   }
 
   return undefined;
+}
+
+export function getLastWorkerResult(workerRuns: WorkerRun[]): WorkerResultEnvelope | null {
+  for (let index = workerRuns.length - 1; index >= 0; index -= 1) {
+    const result = workerRuns[index]?.result;
+    if (result != null) {
+      return result;
+    }
+  }
+
+  return null;
 }
 
 export function resolveWorkerRunStatus(

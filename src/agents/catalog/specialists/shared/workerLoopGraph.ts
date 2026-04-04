@@ -1,12 +1,5 @@
-import { BaseMessage, SystemMessage, ToolMessage, isAIMessage } from '@langchain/core/messages';
+import { BaseMessage, HumanMessage, SystemMessage, ToolMessage, isAIMessage } from '@langchain/core/messages';
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
-import type { WorkerResultEnvelope } from '../catalog/contracts/workerResult';
-import {
-  normalizeWorkerResult,
-  workerResultToEnvelope,
-  WORKER_RESULT_TOOL_NAME,
-} from '../catalog/contracts/workerResult';
-import type { WorkerTaskEnvelope } from '../catalog/contracts/workerRequest';
 import {
   addTraceEvent,
   buildTraceAttributes,
@@ -16,50 +9,16 @@ import {
   runAgentSpan,
   runLlmSpan,
   runToolSpan,
-} from '../../observability/traceContext';
-export type ToolRun = {
-  toolName: string;
-  args: Record<string, unknown>;
-  status: 'completed' | 'failed';
-  structured: Record<string, unknown> | null;
-  error?: {
-    source?: string;
-    message: string;
-    code?: string;
-    type?: string;
-    retryable?: boolean;
-  };
-};
+} from '../../../../observability/traceContext';
+import { type ToolRun } from '../../../shared/toolRun';
 
-export const ToolLoopStateAnnotation = Annotation.Root({
-  messages: Annotation<BaseMessage[]>({
-    reducer: (oldMessages, newMessages) => [...oldMessages, ...newMessages],
-  }),
-  toolRuns: Annotation<ToolRun[]>({
-    reducer: (oldRuns, newRuns) => [...oldRuns, ...newRuns],
-    default: () => [],
-  }),
-  shouldExitAfterTools: Annotation<boolean>({
-    reducer: (_, newValue) => newValue,
-    default: () => false,
-  }),
-  /** Structured handoff from planner; passed through, not consumed by the loop. */
-  handoff: Annotation<WorkerTaskEnvelope | null>({
-    reducer: (_, newValue) => newValue,
-    default: () => null,
-  }),
-  /** Set by the tools node when report_worker_result completes successfully. */
-  finalResult: Annotation<WorkerResultEnvelope | null>({
-    reducer: (_, newValue) => newValue,
-    default: () => null,
-  }),
-});
-
-type CreateToolLoopGraphOptions = {
+export type CreateWorkerLoopGraphOptions<Handoff = unknown, FinalResult = unknown> = {
   model: any;
   tools: any[];
   systemPrompt: () => string;
   finalToolNames?: string[];
+  renderHandoffMessage?: (handoff: Handoff) => string;
+  extractFinalResult?: (toolRun: ToolRun) => FinalResult | null;
 };
 
 type WorkerTool = {
@@ -83,10 +42,6 @@ function parseToolCallArgs(value: unknown): Record<string, unknown> {
     }
   }
   return {};
-}
-
-function normalizeArgs(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? value : {};
 }
 
 function safeSerialize(value: unknown): string | null {
@@ -212,16 +167,46 @@ function buildFailedToolPayload(toolName: string, message: string, source: strin
   };
 }
 
-export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames = [] }: CreateToolLoopGraphOptions) {
+export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>({
+  model,
+  tools,
+  systemPrompt,
+  finalToolNames = [],
+  renderHandoffMessage,
+  extractFinalResult,
+}: CreateWorkerLoopGraphOptions<Handoff, FinalResult>) {
+  const WorkerLoopStateAnnotation = Annotation.Root({
+    messages: Annotation<BaseMessage[]>({
+      reducer: (oldMessages, newMessages) => [...oldMessages, ...newMessages],
+    }),
+    toolRuns: Annotation<ToolRun[]>({
+      reducer: (oldRuns, newRuns) => [...oldRuns, ...newRuns],
+      default: () => [],
+    }),
+    shouldExitAfterTools: Annotation<boolean>({
+      reducer: (_, newValue) => newValue,
+      default: () => false,
+    }),
+    handoff: Annotation<Handoff | null>({
+      reducer: (_, newValue) => newValue,
+      default: () => null,
+    }),
+    finalResult: Annotation<FinalResult | null>({
+      reducer: (_, newValue) => newValue,
+      default: () => null,
+    }),
+  });
   const toolsByName = new Map<string, WorkerTool>(tools.map((tool) => [tool.name, tool]));
   const finalToolNameSet = new Set(finalToolNames);
 
-  const agentNode = async (state: typeof ToolLoopStateAnnotation.State) => {
+  const agentNode = async (state: typeof WorkerLoopStateAnnotation.State) => {
     return runAgentSpan(
       'worker.tool_loop.agent',
       async () => {
         const runnableModel = model.bindTools(tools);
-        const llmMessages = [new SystemMessage(systemPrompt()), ...state.messages];
+        const syntheticHandoffMessage =
+          state.handoff != null && renderHandoffMessage ? [new HumanMessage(renderHandoffMessage(state.handoff))] : [];
+        const llmMessages = [new SystemMessage(systemPrompt()), ...syntheticHandoffMessage, ...state.messages];
         const response = await runLlmSpan('worker.tool_loop.agent.llm', async () => runnableModel.invoke(llmMessages), {
           inputMessages: llmMessages,
           model: runnableModel,
@@ -253,7 +238,7 @@ export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames
     );
   };
 
-  const toolsNode = async (state: typeof ToolLoopStateAnnotation.State) => {
+  const toolsNode = async (state: typeof WorkerLoopStateAnnotation.State) => {
     const lastMessage = state.messages[state.messages.length - 1];
     if (!isAIMessage(lastMessage) || !Array.isArray(lastMessage.tool_calls) || lastMessage.tool_calls.length === 0) {
       return {
@@ -265,7 +250,7 @@ export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames
     const messages: ToolMessage[] = [];
     const toolRuns: ToolRun[] = [];
     const shouldExitAfterTools = lastMessage.tool_calls.some((toolCall) => finalToolNameSet.has(toolCall.name));
-    let finalResultUpdate: WorkerResultEnvelope | null = null;
+    let finalResultUpdate: FinalResult | null = null;
     for (const toolCall of lastMessage.tool_calls) {
       const tool = toolsByName.get(toolCall.name);
       const toolCallId =
@@ -331,6 +316,7 @@ export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames
               return {
                 ...buildTraceAttributes({
                   'tool.status': normalizedRun.status,
+                  'error.source': normalizedRun.error?.source,
                   'error.type': normalizedRun.error?.type,
                   'error.code': normalizedRun.error?.code,
                   'error.retryable': normalizedRun.error?.retryable,
@@ -347,13 +333,11 @@ export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames
         const payloadWithContent = maybeAugmentToolPayloadWithContent(payload);
         const normalizedRun = normalizeToolRun(toolName, args, payloadWithContent);
         toolRuns.push(normalizedRun);
-        if (
-          normalizedRun.toolName === WORKER_RESULT_TOOL_NAME &&
-          normalizedRun.status === 'completed' &&
-          normalizedRun.structured
-        ) {
-          const result = normalizeWorkerResult(normalizedRun.structured);
-          if (result) finalResultUpdate = workerResultToEnvelope(result);
+        if (extractFinalResult) {
+          const extractedFinalResult = extractFinalResult(normalizedRun);
+          if (extractedFinalResult != null) {
+            finalResultUpdate = extractedFinalResult;
+          }
         }
         messages.push(
           new ToolMessage({
@@ -385,17 +369,17 @@ export function createToolLoopGraph({ model, tools, systemPrompt, finalToolNames
     };
   };
 
-  const getNextRoute = (state: typeof ToolLoopStateAnnotation.State) => {
+  const getNextRoute = (state: typeof WorkerLoopStateAnnotation.State) => {
     const lastMessage = state.messages[state.messages.length - 1];
     return isAIMessage(lastMessage) && Array.isArray(lastMessage.tool_calls) && lastMessage.tool_calls.length > 0
       ? 'callTools'
       : 'end';
   };
 
-  const getPostToolsRoute = (state: typeof ToolLoopStateAnnotation.State) =>
+  const getPostToolsRoute = (state: typeof WorkerLoopStateAnnotation.State) =>
     state.shouldExitAfterTools ? 'end' : 'agent';
 
-  return new StateGraph(ToolLoopStateAnnotation)
+  return new StateGraph(WorkerLoopStateAnnotation)
     .addNode('agent', agentNode)
     .addNode('tools', toolsNode)
     .addEdge(START, 'agent')

@@ -49,14 +49,6 @@ const tracer = new OITracer({
   tracer: trace.getTracer('op-assistant-observability'),
 });
 
-function truncateText(value: string, maxLength: number) {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
-}
-
 function normalizeWhitespace(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -93,26 +85,30 @@ function toPrimitiveAttribute(value: unknown): TraceAttributeValue | undefined {
 }
 
 export function formatTraceValue(value: unknown, maxLength = 1000) {
+  void maxLength;
+
   if (typeof value === 'string') {
-    return truncateText(value.trim(), maxLength);
+    return value.trim();
   }
 
   try {
-    return truncateText(JSON.stringify(value), maxLength);
+    return JSON.stringify(value);
   } catch {
-    return truncateText(String(value), maxLength);
+    return String(value);
   }
 }
 
 export function formatTraceText(value: unknown, maxLength = 1500) {
+  void maxLength;
+
   if (typeof value === 'string') {
-    return truncateText(value.trim(), maxLength);
+    return value.trim();
   }
 
   try {
-    return truncateText(JSON.stringify(value, null, 2), maxLength);
+    return JSON.stringify(value, null, 2);
   } catch {
-    return truncateText(String(value), maxLength);
+    return String(value);
   }
 }
 
@@ -188,7 +184,7 @@ function extractMessageContents(message: BaseMessage): OpenInferenceMessageConte
     if (block.type === 'text' && typeof block.text === 'string') {
       contents.push({
         type: 'text',
-        text: truncateText(block.text.trim(), 4000),
+        text: block.text.trim(),
       });
       continue;
     }
@@ -218,7 +214,7 @@ function extractMessageContents(message: BaseMessage): OpenInferenceMessageConte
 
 function extractMessageTextContent(message: BaseMessage) {
   const text = typeof message.text === 'string' ? normalizeWhitespace(message.text) : '';
-  return text.length > 0 ? truncateText(text, 4000) : undefined;
+  return text.length > 0 ? text : undefined;
 }
 
 function toOpenInferenceToolCalls(message: BaseMessage) {

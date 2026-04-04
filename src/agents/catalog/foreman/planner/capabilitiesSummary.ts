@@ -1,4 +1,4 @@
-import { getCatalogWorkerToolset } from '../specialists/shared/workerToolsets';
+import { getCatalogWorkerToolset } from '../../specialists/shared/workerToolsets';
 
 const t = (tool: { name: string }) => `\`${tool.name}\``;
 const renderToolList = (tools: readonly { name: string }[]) => tools.map(t).join(', ');

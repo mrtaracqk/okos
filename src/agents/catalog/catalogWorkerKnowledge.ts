@@ -1,8 +1,5 @@
 import { CATALOG_WORKER_IDS, type CatalogWorkerId } from './contracts/catalogWorkerId';
 
-/** Re-export for plan task schema (`responsible` / `executableTaskInputSchema`). */
-export const PLAN_WORKER_OWNERS = CATALOG_WORKER_IDS;
-
 export type PlanWorkerOwner = CatalogWorkerId;
 
 export type CatalogWorkerKnowledgeEntry = {
@@ -20,7 +17,7 @@ const categoryWorkerKnowledge = {
     'Ты не определяешь состав товаров внутри категории и не ищешь товары по категории через свои инструменты; для этого нужен product-worker.',
   ],
   lookupRules: [
-    'Если категория задана не ID, а именем, сначала используй list; когда нужен точный подтверждённый объект — read по ID. Прямого поиска по slug в текущем tool schema нет.',
+    'Если категория задана не ID, а именем, сначала используй list; Прямого поиска по slug в текущем tool schema нет.',
     'Поиск категорий как правило возвращает большую часть полезной информации, не перепроверяй через read если нужные тебе данные уже пришли через поиск.',
   ],
   blockerRules: [
@@ -55,6 +52,8 @@ const productWorkerKnowledge = {
   ],
   lookupRules: [
     'Для поиска товара обычно начинай с products_list, а когда нужен подтверждённый объект конкретного товара, переходи к products_read по ID.',
+    'Если во входе есть permalink или URL товара, передавай url в products_list: tool сам извлечёт slug и выполнит точный lookup по slug.',
+    'Если известен slug, ищи через slug; если известен SKU или строка может быть названием или SKU, предпочитай sku / search_name_or_sku; общий search оставляй для обычного текстового поиска.',
     'products_list и products_read возвращают сокращённую проекцию товара; не приписывай карточке поля, которых нет в payload конкретного tool result.',
     'Для подготовки product-owned шага ты можешь делать read-only lookup в соседних доменах: категории, глобальные атрибуты/term-ы и variation того же товара.',
     'Если запрошенный факт может различаться между variation (цена, SKU, сочетание опций и т.п.), не считай ответ завершённым на одних данных родителя.',

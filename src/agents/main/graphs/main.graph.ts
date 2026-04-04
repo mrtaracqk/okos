@@ -1,12 +1,11 @@
 import { AIMessage, BaseMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
-import { Annotation, BaseCheckpointSaver, END, START, StateGraph, getConfig } from '@langchain/langgraph';
+import { END, START, StateGraph, getConfig } from '@langchain/langgraph';
 import {
   buildCatalogDelegationResultFromCatalogState,
   catalogAgentGraph,
   formatCatalogDelegationUserMessage,
   type CatalogDelegationResult,
 } from '../../catalog';
-import { graphCheckpointer } from '../../shared/checkpointing';
 import { extractMessageText, getLastAIMessage, getLastAIMessageText } from '../../shared/messageUtils';
 import {
   addTraceEvent,
@@ -18,28 +17,19 @@ import {
 import { telegramMainGraphProgressReporter, type MainGraphProgressReporter } from '../progress';
 import { parseCatalogDelegationRequest, renderCatalogDelegationRequestToPrompt } from '../catalogDelegation';
 import { responseAgentNode } from '../nodes/responseAgent.node';
-import { delegateCatalogTool } from '../tools/delegateCatalog.tool';
+import { delegateCatalogTool } from '../tools';
+import {
+  defaultMainGraphCheckpointer,
+  MainGraphStateAnnotation,
+  type CreateMainGraphOptions,
+  type MainGraphState,
+} from '../state';
 
-export const mainTools = [delegateCatalogTool];
-
-export const MainGraphStateAnnotation = Annotation.Root({
-  messages: Annotation<BaseMessage[]>({
-    reducer: (oldMessages, newMessages) => [...oldMessages, ...newMessages],
-  }),
-  chatId: Annotation<number>(),
-  catalogDelegation: Annotation<CatalogDelegationResult | null>({
-    reducer: (_oldValue, newValue) => newValue,
-    default: () => null,
-  }),
-});
-
-type CreateMainGraphOptions = {
-  checkpointer?: BaseCheckpointSaver | boolean;
-  name?: string;
+type CreateConfiguredMainGraphOptions = CreateMainGraphOptions & {
   progressReporter?: MainGraphProgressReporter;
 };
 
-const getMainRoute = async (state: typeof MainGraphStateAnnotation.State, progressReporter: MainGraphProgressReporter) => {
+const getMainRoute = async (state: MainGraphState, progressReporter: MainGraphProgressReporter) => {
   const lastMessage = getLastAIMessage(state.messages);
   const hasCatalogDelegation = lastMessage?.tool_calls?.some((toolCall) => toolCall.name === delegateCatalogTool.name);
 
@@ -51,7 +41,7 @@ const getMainRoute = async (state: typeof MainGraphStateAnnotation.State, progre
 };
 
 function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
-  return async (state: typeof MainGraphStateAnnotation.State): Promise<Partial<typeof MainGraphStateAnnotation.State>> => {
+  return async (state: MainGraphState): Promise<Partial<MainGraphState>> => {
     return runChainSpan(
       'main_graph.catalog_agent_handoff',
       async () => {
@@ -191,15 +181,15 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
   };
 }
 
-function getPostCatalogRoute(state: typeof MainGraphStateAnnotation.State) {
+function getPostCatalogRoute(state: MainGraphState) {
   return 'end';
 }
 
 export function createMainGraph({
-  checkpointer = graphCheckpointer,
+  checkpointer = defaultMainGraphCheckpointer,
   name = 'Основной граф Telegram-бота',
   progressReporter = telegramMainGraphProgressReporter,
-}: CreateMainGraphOptions = {}) {
+}: CreateConfiguredMainGraphOptions = {}) {
   return new StateGraph(MainGraphStateAnnotation)
     .addNode('responseAgent', responseAgentNode)
     .addNode('catalogAgent', createCatalogAgentNode(progressReporter))

@@ -21,10 +21,6 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 - Название товара — строка, будет использовано как name
 - Категория — название категории; при необходимости указать родительскую
 
-### Опциональные
-
-- Краткое описание — текст для short_description.
-
 ## Принцип routing
 
 - Owner конечного действия — product-worker: именно он создаёт товар.
@@ -47,7 +43,6 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 - name
 - type = simple
 - status = draft
-- short_description, если есть
 - category name и parent category name, если даны
 
 Ожидаемый результат при успехе:
@@ -93,8 +88,7 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 - name
 - type = simple
 - status = draft
-- short_description, если есть
-- categories = [{ id: category_id }] из шага 2
+- category_ids = [category_id] из шага 2
 
 Ожидаемый результат:
 - product_id
@@ -133,7 +127,6 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 ### Опциональные
 
 - Категория — название категории; при необходимости указать родительскую. Если не указана, товар можно создать без привязки категории.
-- Краткое описание — текст для short_description.
 
 ## Принцип routing
 
@@ -159,7 +152,6 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 - name
 - type = variable
 - status = draft
-- short_description, если есть
 - category name и parent category name, если даны
 - название атрибута
 - список значений
@@ -213,9 +205,8 @@ const catalogPlaybooks: CatalogPlaybook[] = [
 - name
 - type = variable
 - status = draft
-- short_description, если есть
-- categories = [{ id: category_id }] если категория была подготовлена отдельно
-- attributes в формате WooCommerce product attributes на основе подготовленных attribute_id и term-ов
+- category_ids = [category_id], если категория была подготовлена отдельно
+- product-level attributes, собранные только из подтверждённых attribute_id и нужных значений term-ов
 
 Ожидаемый результат:
 - product_id

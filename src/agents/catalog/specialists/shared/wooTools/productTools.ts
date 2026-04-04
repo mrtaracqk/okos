@@ -4,10 +4,6 @@ import { getWooExecuteWithHeaders } from '../../../../../services/woo/wooClient'
 import { parseWpCollectionHeaders } from '../../../../../services/woo/wpCollectionHeaders';
 import { buildPagedListSuccess, buildToolSuccess } from '../../../../../services/woo/wooToolResult';
 import type { ProductUpdateBody, ProductsCreateBody } from '../../../../../services/woo-sdk/src/models/products';
-import {
-  productUpdateBodySchema,
-  productsCreateBodySchema,
-} from '../../../../../services/woo-sdk/src/models/products';
 
 const productAttributeRowSchema = z
   .object({
@@ -22,12 +18,63 @@ const productAttributeRowSchema = z
 
 type ProductAttributeRow = z.infer<typeof productAttributeRowSchema>;
 
-const updateProductInputSchema = productUpdateBodySchema
-  .omit({ attributes: true, default_attributes: true })
-  .partial()
-  .extend({
+const productStatusSchema = z.enum(['draft', 'pending', 'private', 'publish']);
+
+const productTypeSchema = z.enum(['simple', 'variable']);
+
+const productCategoryIdsSchema = z
+  .array(z.coerce.number().int().min(1))
+  .describe('Список ID категорий WooCommerce.');
+
+const createProductAttributeSchema = z
+  .object({
+    id: z.coerce.number().int().min(1).describe('ID глобального атрибута Woo taxonomy.'),
+    options: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe('Список значений/term names для родительского товара.'),
+    variation: z.boolean().optional().describe('Участвует в вариациях.'),
+    visible: z.boolean().optional().describe('Видимость на вкладке «Дополнительная информация».'),
+  })
+  .strict();
+
+const createProductDefaultAttributeSchema = z
+  .object({
+    id: z.coerce.number().int().min(1).describe('ID глобального атрибута Woo taxonomy.'),
+    option: z.string().min(1).describe('Значение по умолчанию.'),
+  })
+  .strict();
+
+const createProductInputSchema = z
+  .object({
+    name: z.string().min(1).describe('Название товара.'),
+    type: productTypeSchema.optional().describe('Тип товара. По умолчанию simple.'),
+    status: productStatusSchema.optional().describe('Статус товара. По умолчанию draft.'),
+    category_ids: productCategoryIdsSchema.optional(),
+    regular_price: z.string().min(1).optional().describe('Обычная цена товара в формате WooCommerce string.'),
+    attributes: z
+      .array(createProductAttributeSchema)
+      .optional()
+      .describe('Product-level attributes для parent product.'),
+    default_attributes: z
+      .array(createProductDefaultAttributeSchema)
+      .optional()
+      .describe('Значения по умолчанию для variable parent.'),
+  })
+  .strict();
+
+const updateProductInputSchema = z
+  .object({
     id: z.coerce.number().int().min(1),
-  });
+    name: z.string().min(1).optional().describe('Новое название товара.'),
+    status: productStatusSchema.optional().describe('Новый статус товара.'),
+    category_ids: productCategoryIdsSchema.optional(),
+    regular_price: z.string().min(1).optional().describe('Новая обычная цена товара.'),
+  })
+  .strict();
+
+type CreateProductInput = z.infer<typeof createProductInputSchema>;
+type UpdateProductInput = z.infer<typeof updateProductInputSchema>;
 
 function sameAttributeRow(a: ProductAttributeRow, b: ProductAttributeRow): boolean {
   if (a.id != null && b.id != null && a.id === b.id) {
@@ -80,6 +127,61 @@ const truncateField = (value: unknown, maxLength: number) => {
   return value.length > maxLength ? value.slice(0, maxLength) : value;
 };
 
+const toWooCategories = (categoryIds: number[] | undefined) =>
+  categoryIds?.map((id) => ({ id }));
+
+const productLookupInputSchema = z
+  .object({
+    page: z.coerce.number().int().min(1).max(5).optional(),
+    per_page: z.coerce.number().int().min(1).max(20).optional(),
+    search: z.string().min(1).optional().describe('Общий текстовый поиск Woo. Не используй как замену slug/SKU lookup.'),
+    slug: z.string().min(1).optional().describe('Точный slug товара. Предпочтительно, если во входе есть permalink или slug.'),
+    sku: z.string().min(1).optional().describe('Точный SKU товара.'),
+    search_name_or_sku: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Частичный поиск по name или SKU. Предпочтительнее обычного search, если строка может быть названием или SKU.'),
+    url: z
+      .string()
+      .url()
+      .optional()
+      .describe('Permalink товара. Если передан, tool локально извлечёт slug из URL и отправит в Woo query.slug.'),
+    category: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe('ID категории WooCommerce: только товары, назначенные в эту категорию (REST query category).'),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.url && value.slug) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Use either url or slug, not both.',
+        path: ['url'],
+      });
+    }
+  });
+
+type ProductLookupInput = z.infer<typeof productLookupInputSchema>;
+
+function extractSlugFromProductUrl(rawUrl: string): string | undefined {
+  try {
+    const parsed = new URL(rawUrl);
+    const segments = parsed.pathname
+      .split('/')
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    const lastSegment = segments.at(-1);
+    return lastSegment ? decodeURIComponent(lastSegment) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const toProductSummary = (product: any) => {
   if (!product || typeof product !== 'object') {
     return product;
@@ -105,31 +207,27 @@ const toProductSummary = (product: any) => {
 
 export const listProductsTool = createWooTool({
   name: 'wc.v3.products_list',
-  description: 'Список товаров (пагинация, поиск, фильтр по category id)',
+  description:
+    'Список товаров. Для permalink/url ищи через url->slug, для точного slug через slug, для SKU через sku или search_name_or_sku; общий search оставляй для обычного текста.',
   requiresApproval: false,
-  schema: z.object({
-    page: z.coerce.number().int().min(1).max(5).optional(),
-    per_page: z.coerce.number().int().min(1).max(20).optional(),
-    search: z.string().optional(),
-    category: z.coerce
-      .number()
-      .int()
-      .min(1)
-      .optional()
-      .describe('ID категории WooCommerce: только товары, назначенные в эту категорию (REST query category).'),
-  }),
+  schema: productLookupInputSchema,
   run: async (input) => {
+    const { url, ...rest } = input as ProductLookupInput;
     const page = input.page ?? 1;
     const per_page = input.per_page ?? 10;
+    const resolvedSlug = url ? extractSlugFromProductUrl(url) : rest.slug;
     const { data, headers } = await getWooExecuteWithHeaders()({
       method: 'GET',
       routeTemplate: '/products',
       query: {
         page,
         per_page,
-        search: input.search,
+        search: rest.search,
+        slug: resolvedSlug,
+        sku: rest.sku,
+        search_name_or_sku: rest.search_name_or_sku,
         status: 'any',
-        ...(input.category != null ? { category: String(input.category) } : {}),
+        ...(rest.category != null ? { category: String(rest.category) } : {}),
       },
     });
     const list = Array.isArray(data) ? data : [];
@@ -143,8 +241,7 @@ export const listProductsTool = createWooTool({
 
 export const getProductTool = createWooTool({
   name: 'wc.v3.products_read',
-  description:
-    'Прочитать один товар по ID.',
+  description: 'Прочитать один товар по ID.',
   requiresApproval: false,
   schema: z.object({
     id: z.coerce.number().int().min(1),
@@ -155,19 +252,17 @@ export const getProductTool = createWooTool({
   },
 });
 
-const createProductInputSchema = productsCreateBodySchema.partial().extend({
-  name: z.string().min(1).describe('Название товара.'),
-});
-
 export const createProductTool = createWooTool({
   name: 'wc.v3.products_create',
-  description: 'Создать товар (POST /products).',
+  description:
+    'Создать товар (POST /products). Доступны только name, type, status, category_ids, regular_price, attributes и default_attributes.',
   requiresApproval: true,
   schema: createProductInputSchema,
   run: async (input, { client }) => {
-    const { name, ...rest } = input;
+    const { name, category_ids, ...rest } = input as CreateProductInput;
     const body = omitUndefined({
       ...rest,
+      categories: toWooCategories(category_ids),
       name,
       type: input.type ?? 'simple',
       status: input.status ?? 'draft',
@@ -180,12 +275,15 @@ export const createProductTool = createWooTool({
 export const updateProductTool = createWooTool({
   name: 'wc.v3.products_update',
   description:
-    'Обновить товар (PUT /products/{id}). Без полей attributes / default_attributes — для них отдельные инструменты append/remove.',
+    'Обновить товар (PUT /products/{id}). Доступны только name, status, category_ids и regular_price. Для attributes / default_attributes есть отдельные инструменты append/remove.',
   requiresApproval: true,
   schema: updateProductInputSchema,
   run: async (input, { client }) => {
-    const { id, ...rest } = input;
-    const body = omitUndefined(rest) as ProductUpdateBody;
+    const { id, category_ids, ...rest } = input as UpdateProductInput;
+    const body = omitUndefined({
+      ...rest,
+      categories: toWooCategories(category_ids),
+    }) as ProductUpdateBody;
     const product = await client.products.updateProduct({
       path: { id },
       body,

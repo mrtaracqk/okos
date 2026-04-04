@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { renderCatalogForemanWorkerCapabilities } from './workerCapabilitiesSummary';
-import { PROMPTS } from '../../../prompts';
+import { PROMPTS } from '../../../../prompts';
+import { renderCatalogForemanWorkerCapabilities } from './capabilitiesSummary';
 
-describe('workerCapabilitiesSummary', () => {
+describe('renderCatalogForemanWorkerCapabilities', () => {
   test('distinguishes owned mutations from research lookup access', () => {
     const summary = renderCatalogForemanWorkerCapabilities();
 

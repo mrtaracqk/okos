@@ -1,6 +1,10 @@
 import TelegramService from '../../services/telegram';
-import type { RuntimeTelegramMessageRef } from '../shared/runtime-plugin.types';
-import type { PlanningProjectionAdapter, RuntimePlan, RuntimePlanStatus, RuntimePlanTask } from './types';
+import type {
+  PlanningChannelAdapter,
+  RuntimePlan,
+  RuntimePlanStatus,
+  RuntimePlanTask,
+} from '../../runtime/planning/types';
 
 const taskStatusIcons: Record<RuntimePlanTask['status'], string> = {
   pending: '◻️',
@@ -39,32 +43,20 @@ export function renderRuntimePlan(plan: RuntimePlan) {
   return lines.join('\n').trim();
 }
 
-export class TelegramPlanningAdapter implements PlanningProjectionAdapter {
-  async sendPlan(plan: RuntimePlan): Promise<RuntimeTelegramMessageRef | null> {
+export class TelegramPlanningAdapter implements PlanningChannelAdapter {
+  async sendPlan(plan: RuntimePlan): Promise<number | null> {
     const message = await TelegramService.sendMessage(plan.chatId, renderRuntimePlan(plan));
-    return {
-      chatId: plan.chatId,
-      messageId: message.message_id,
-    };
+    return message.message_id;
   }
 
-  async updatePlan(plan: RuntimePlan): Promise<void> {
-    if (!plan.telegramMessageId) {
-      throw new Error(`План выполнения для run "${plan.runId}" нельзя обновить без telegramMessageId.`);
-    }
-
+  async updatePlan(plan: RuntimePlan, messageId: number): Promise<void> {
     await TelegramService.editMessageText(renderRuntimePlan(plan), {
       chat_id: plan.chatId,
-      message_id: plan.telegramMessageId,
+      message_id: messageId,
     });
   }
 
-  async deletePlan(plan: RuntimePlan): Promise<void> {
-    if (!plan.telegramMessageId) {
-      return;
-    }
-
-    await TelegramService.deleteMessage(plan.chatId, plan.telegramMessageId);
+  async deletePlan(plan: RuntimePlan, messageId: number): Promise<void> {
+    await TelegramService.deleteMessage(plan.chatId, messageId);
   }
 }
-

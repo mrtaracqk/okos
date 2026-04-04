@@ -29,14 +29,16 @@ export const listCategoriesTool = createWooTool({
     per_page: z.coerce.number().int().min(1).max(20).optional(),
   }),
   run: async (input) => {
+    const {search, parent, page, per_page} = input;
+
     const { data, headers } = await getWooExecuteWithHeaders()({
       method: 'GET',
       routeTemplate: '/products/categories',
       query: {
-        search: input.search,
-        parent: input.parent,
-        page: input.page ?? 1,
-        per_page: input.per_page ?? 20,
+        search,
+        parent,
+        page: page ?? 1,
+        per_page: per_page ?? 20,
       },
     });
     const list = Array.isArray(data) ? data : [];

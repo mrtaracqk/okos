@@ -70,42 +70,10 @@ export function createOpenAITokenCounter(modelName = openAIChatModelConfig.getCu
 }
 
 function createChatModel(type: 'chat' | 'utility') {
-  const temperature = type === 'chat' ? 1 : 0;
-  const provider = type === 'utility' ? MODEL_UTILITY_PROVIDER || MODEL_PROVIDER : MODEL_PROVIDER;
-  let chatModel: ChatModelInstance;
+  const modelName = type === 'chat' ? openAIChatModelConfig.getCurrentModelName() : requireOpenAIUtilityModelName();
+  const temperature = 0.3;
 
-  switch (provider) {
-    case 'openai':
-      chatModel = createOpenAIModel(
-        type === 'chat' ? openAIChatModelConfig.getCurrentModelName() : requireOpenAIUtilityModelName(),
-        temperature
-      );
-      break;
-    case 'google':
-      chatModel = new ChatGoogleGenerativeAI({
-        apiKey: process.env.GOOGLE_API_KEY!,
-        model: type === 'chat' ? process.env.GOOGLE_MODEL_NAME || 'gemini-1.5-pro' : process.env.GOOGLE_UTILITY_MODEL_NAME || 'gemini-1.5-flash',
-        temperature,
-        maxRetries: 2,
-      });
-      break;
-    case 'groq':
-      chatModel = new ChatGroq({
-        apiKey: process.env.GROQ_API_KEY!,
-        model: type === 'chat' ? process.env.GROQ_MODEL_NAME || 'gemma2-9b-it' : process.env.GROQ_UTILITY_MODEL_NAME || 'llama-3.1-8b-instant',
-        temperature,
-        maxRetries: 2,
-      });
-      break;
-    default:
-      chatModel = createOpenAIModel(
-        type === 'chat' ? openAIChatModelConfig.getCurrentModelName() : requireOpenAIUtilityModelName(),
-        temperature
-      );
-      break;
-  }
-
-  return chatModel;
+  return createOpenAIModel(modelName, temperature);
 }
 
 function getChatModelInstance() {

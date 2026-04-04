@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { renderRuntimePlan } from './telegram-adapter';
-import type { RuntimePlan } from './types';
+import type { RuntimePlan } from '../../runtime/planning/types';
 
 describe('renderRuntimePlan', () => {
   it('renders checklist style output with owners and task notes', () => {
@@ -8,10 +8,11 @@ describe('renderRuntimePlan', () => {
       runId: 'run-1',
       chatId: 101,
       status: 'failed',
-      telegramMessageId: 700,
-      createdAt: new Date('2026-03-14T10:00:00.000Z'),
-      updatedAt: new Date('2026-03-14T10:01:00.000Z'),
-      completedAt: new Date('2026-03-14T10:01:00.000Z'),
+      planContext: {
+        goal: 'Подготовить каталог',
+        facts: [],
+        constraints: [],
+      },
       tasks: [
         {
           taskId: 'category',
@@ -35,4 +36,3 @@ describe('renderRuntimePlan', () => {
     expect(renderRuntimePlan(plan)).toContain('Ответственный: attribute-worker');
   });
 });
-

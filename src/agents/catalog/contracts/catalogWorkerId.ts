@@ -6,6 +6,8 @@ export const CATALOG_WORKER_IDS = [
   'variation-worker',
 ] as const;
 
+export const PLAN_WORKER_OWNERS = CATALOG_WORKER_IDS;
+
 export type CatalogWorkerId = (typeof CATALOG_WORKER_IDS)[number];
 
 const workerIdSet = new Set<string>(CATALOG_WORKER_IDS);

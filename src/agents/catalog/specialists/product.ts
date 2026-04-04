@@ -1,17 +1,17 @@
 import { chatModel } from '../../../config';
 import { PROMPTS } from '../../../prompts';
 import { CATALOG_WORKER_KNOWLEDGE } from '../catalogWorkerKnowledge';
-import { WORKER_RESULT_TOOL_NAME, createWorkerResultTool } from '../contracts/workerResult';
-import { createToolLoopGraph } from '../../shared/toolLoopGraph';
+import { createCatalogToolLoopGraph } from './shared/catalogToolLoop';
 import { getCatalogWorkerRuntimeTools } from './shared/workerToolsets';
 import { type CatalogWorkerDefinition } from './shared/workerDefinition';
+import { createWorkerResultTool, WORKER_RESULT_TOOL_NAME } from '../contracts/workerResult';
 
 const k = CATALOG_WORKER_KNOWLEDGE['product-worker'];
 
 const productWorkerTools = [...getCatalogWorkerRuntimeTools(k.id), createWorkerResultTool()];
 
 function buildProductWorkerGraph() {
-  return createToolLoopGraph({
+  return createCatalogToolLoopGraph({
     model: chatModel,
     tools: productWorkerTools,
     systemPrompt: () => PROMPTS.CATALOG_WORKERS.PRODUCT(productWorkerTools.map((tool) => tool.name)),

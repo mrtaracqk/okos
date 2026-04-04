@@ -2,11 +2,10 @@ import { SystemMessage } from '@langchain/core/messages';
 import { chatModel } from '../../../config';
 import { buildTraceAttributes, runAgentSpan, runLlmSpan } from '../../../observability/traceContext';
 import { PROMPTS } from '../../../prompts';
-import { MainGraphStateAnnotation, mainTools } from '../graphs/main.graph';
+import { type MainGraphState } from '../state';
+import { mainTools } from '../tools';
 
-export const responseAgentNode = async (
-  state: typeof MainGraphStateAnnotation.State
-): Promise<Partial<typeof MainGraphStateAnnotation.State>> => {
+export const responseAgentNode = async (state: MainGraphState): Promise<Partial<MainGraphState>> => {
   return runAgentSpan(
     'main_graph.response_agent',
     async () => {

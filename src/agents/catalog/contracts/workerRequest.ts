@@ -1,13 +1,25 @@
-/**
- * Shared envelope for handoff from planner to worker. Single canonical shape
- * without scenario-specific schemas. Text views are derived from this.
- */
-export type WorkerTaskEnvelope = {
+export type WorkerPlanContext = {
+  goal: string;
+  facts: string[];
+  constraints: string[];
+};
+
+export type WorkerTaskInput = {
   objective: string;
   facts: string[];
   constraints: string[];
   expectedOutput: string;
   contextNotes?: string;
+};
+
+/**
+ * Shared envelope for handoff from planner to worker.
+ * Plan-wide context and step-local input are kept separate on purpose.
+ */
+export type WorkerTaskEnvelope = {
+  planContext: WorkerPlanContext;
+  taskInput: WorkerTaskInput;
+  upstreamArtifacts?: unknown[];
 };
 
 export type WorkerRequest = {
@@ -17,14 +29,14 @@ export type WorkerRequest = {
   whatToReturn: string;
 };
 
-/**
- * Shape of handoff tool arguments (envelope fields). Planner fills these;
- * dispatcher converts to WorkerTaskEnvelope.
- */
 export type HandoffToolArgs = {
+  planGoal?: string;
+  planFacts?: string;
+  planConstraints?: string;
   objective?: string;
   facts?: string;
   constraints?: string;
+  upstreamArtifacts?: unknown[];
   expectedOutput?: string;
   contextNotes?: string;
 };
@@ -37,30 +49,48 @@ function splitNonEmptyLines(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
-/** Build WorkerTaskEnvelope from handoff tool args (envelope-shaped). */
+/** Build WorkerTaskEnvelope from envelope-shaped tool args. */
 export function parseHandoffArgsToEnvelope(args: HandoffToolArgs): WorkerTaskEnvelope {
+  const planGoal = typeof args.planGoal === 'string' ? args.planGoal.trim() : '';
   const objective = typeof args.objective === 'string' ? args.objective.trim() : '';
-  const facts = splitNonEmptyLines(args.facts);
-  const constraints = splitNonEmptyLines(args.constraints);
   const expectedOutput = typeof args.expectedOutput === 'string' ? args.expectedOutput.trim() : '';
   const contextNotes = typeof args.contextNotes === 'string' ? args.contextNotes.trim() || undefined : undefined;
+  const upstreamArtifacts = Array.isArray(args.upstreamArtifacts) ? args.upstreamArtifacts : undefined;
+
   return {
-    objective,
-    facts,
-    constraints,
-    expectedOutput,
-    contextNotes,
+    planContext: {
+      goal: planGoal,
+      facts: splitNonEmptyLines(args.planFacts),
+      constraints: splitNonEmptyLines(args.planConstraints),
+    },
+    taskInput: {
+      objective,
+      facts: splitNonEmptyLines(args.facts),
+      constraints: splitNonEmptyLines(args.constraints),
+      expectedOutput,
+      contextNotes,
+    },
+    ...(upstreamArtifacts !== undefined ? { upstreamArtifacts } : {}),
   };
 }
 
 /** Build envelope from legacy WorkerRequest (e.g. from tool args). */
 export function toWorkerTaskEnvelope(request: WorkerRequest): WorkerTaskEnvelope {
+  const whyNow = request.whyNow?.trim() || '';
+
   return {
-    objective: request.whatToDo.trim(),
-    facts: request.dataForExecution?.trim() ? [request.dataForExecution.trim()] : [],
-    constraints: [],
-    expectedOutput: request.whatToReturn.trim(),
-    contextNotes: request.whyNow?.trim() || undefined,
+    planContext: {
+      goal: whyNow || request.whatToDo.trim(),
+      facts: [],
+      constraints: [],
+    },
+    taskInput: {
+      objective: request.whatToDo.trim(),
+      facts: request.dataForExecution?.trim() ? [request.dataForExecution.trim()] : [],
+      constraints: [],
+      expectedOutput: request.whatToReturn.trim(),
+      contextNotes: whyNow || undefined,
+    },
   };
 }
 
@@ -77,24 +107,5 @@ export function buildWorkerInput(request: WorkerRequest) {
     `Данные для выполнения:\n${dataForExecution}`,
     `Почему это нужно сделать сейчас:\n${request.whyNow.trim()}`,
     `Что вернуть:\n${request.whatToReturn.trim()}`,
-  ].join('\n\n');
-}
-
-/** Render envelope to text for worker HumanMessage. Includes optional constraints when present. */
-export function buildWorkerInputFromEnvelope(envelope: WorkerTaskEnvelope) {
-  const dataForExecution =
-    envelope.facts.length > 0 ? envelope.facts.join('\n').trim() : EMPTY_EXECUTION_DATA;
-  const whyNow = envelope.contextNotes?.trim() ?? '';
-  const constraintsBlock =
-    envelope.constraints.length > 0
-      ? [`Ограничения:\n${envelope.constraints.join('\n').trim()}`]
-      : [];
-
-  return [
-    `Что сделать:\n${envelope.objective}`,
-    `Данные для выполнения:\n${dataForExecution}`,
-    ...constraintsBlock,
-    `Почему это нужно сделать сейчас:\n${whyNow}`,
-    `Что вернуть:\n${envelope.expectedOutput}`,
   ].join('\n\n');
 }

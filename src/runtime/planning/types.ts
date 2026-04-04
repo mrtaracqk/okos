@@ -27,42 +27,45 @@ export type RuntimePlanTask = {
   status: PlanTaskStatus;
   notes?: string;
   /**
-   * Optional executable contract for execution-driven planning.
-   * If present, execution runtime can handoff objective/facts/etc to the responsible worker.
+   * Optional step-local executable contract for execution-driven planning.
    */
   execution?: RuntimePlanExecution;
+};
+
+export type RuntimePlanContext = {
+  goal: string;
+  facts: string[];
+  constraints: string[];
 };
 
 export type RuntimePlan = {
   runId: string;
   chatId: number;
   status: RuntimePlanStatus;
+  planContext: RuntimePlanContext;
   tasks: RuntimePlanTask[];
-  telegramMessageId?: number;
-  createdAt: Date;
-  updatedAt: Date;
-  completedAt?: Date;
-  startedAt?: Date;
-  requestText?: string;
+  nextStepArtifacts?: unknown[];
 };
 
 export type RuntimePlanCreateInput = {
   runId: string;
   chatId: number;
+  planContext: RuntimePlanContext;
   tasks: RuntimePlanTask[];
-  startedAt?: Date;
-  requestText?: string;
+  nextStepArtifacts?: unknown[];
 };
 
 export type RuntimePlanUpdateInput = {
   runId: string;
   tasks: RuntimePlanTask[];
+  planContext?: RuntimePlanContext;
+  nextStepArtifacts?: unknown[];
 };
 
-export type PlanningProjectionAdapter = {
-  sendPlan(plan: RuntimePlan): Promise<{ chatId: number; messageId: number } | null>;
-  updatePlan(plan: RuntimePlan): Promise<void>;
-  deletePlan(plan: RuntimePlan): Promise<void>;
+export type PlanningChannelAdapter = {
+  sendPlan(plan: RuntimePlan): Promise<number | null>;
+  updatePlan(plan: RuntimePlan, messageId: number): Promise<void>;
+  deletePlan(plan: RuntimePlan, messageId: number): Promise<void>;
 };
 
 /**
@@ -93,4 +96,3 @@ export type RuntimePlanExecution = {
   expectedOutput: string;
   contextNotes?: string;
 };
-

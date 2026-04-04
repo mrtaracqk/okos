@@ -1,9 +1,126 @@
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { tool } from '@langchain/core/tools';
 import { describe, expect, test } from 'bun:test';
-import { createToolLoopGraph } from './toolLoopGraph';
+import { type WorkerTaskEnvelope } from '../../contracts/workerRequest';
+import { renderWorkerHandoffMessage } from './catalogToolLoop';
+import { createWorkerLoopGraph } from './workerLoopGraph';
 
-describe('createToolLoopGraph', () => {
+describe('createWorkerLoopGraph', () => {
+  test('renders worker handoff as a stable structured message', () => {
+    const handoff: WorkerTaskEnvelope = {
+      planContext: {
+        goal: 'Найти товар и проверить его состояние',
+        facts: ['SKU: IPHONE-17-BLK'],
+        constraints: ['Не создавать новые сущности'],
+      },
+      taskInput: {
+        objective: 'Найди товар по SKU',
+        facts: ['SKU: IPHONE-17-BLK', 'Тип: simple'],
+        constraints: ['Только read-only'],
+        expectedOutput: 'status, data, missingData',
+        contextNotes: 'Нужно ответить пользователю без предположений.',
+      },
+      upstreamArtifacts: [{ product_id: 101, sku: 'IPHONE-17-BLK' }],
+    };
+
+    expect(renderWorkerHandoffMessage(handoff)).toBe(
+      [
+        'WORKER_HANDOFF',
+        '```json',
+        JSON.stringify(
+          {
+            planContext: {
+              goal: 'Найти товар и проверить его состояние',
+              facts: ['SKU: IPHONE-17-BLK'],
+              constraints: ['Не создавать новые сущности'],
+            },
+            taskInput: {
+              objective: 'Найди товар по SKU',
+              facts: ['SKU: IPHONE-17-BLK', 'Тип: simple'],
+              constraints: ['Только read-only'],
+              expectedOutput: 'status, data, missingData',
+              contextNotes: 'Нужно ответить пользователю без предположений.',
+            },
+            upstreamArtifacts: [{ product_id: 101, sku: 'IPHONE-17-BLK' }],
+          },
+          null,
+          2
+        ),
+        '```',
+      ].join('\n')
+    );
+  });
+
+  test('injects synthetic handoff message from structured state without upstream HumanMessage', async () => {
+    let capturedMessages: any[] = [];
+    const handoff: WorkerTaskEnvelope = {
+      planContext: {
+        goal: 'Найти товар',
+        facts: ['request=lookup'],
+        constraints: [],
+      },
+      taskInput: {
+        objective: 'Найди товар по SKU',
+        facts: ['SKU: IPHONE-17-BLK'],
+        constraints: ['Только read-only'],
+        expectedOutput: 'status, data, missingData',
+        contextNotes: 'Нужен точный ответ по каталогу.',
+      },
+    };
+
+    const model = {
+      bindTools: () => ({
+        invoke: async (messages: any[]) => {
+          capturedMessages = messages;
+          return new AIMessage({ content: 'done' });
+        },
+      }),
+    };
+
+    const graph = createWorkerLoopGraph({
+      model,
+      tools: [],
+      systemPrompt: () => 'system',
+      renderHandoffMessage: renderWorkerHandoffMessage,
+    }).compile();
+
+    await graph.invoke({
+      messages: [],
+      handoff,
+    });
+
+    expect(capturedMessages).toHaveLength(2);
+    expect(capturedMessages[0]?.content).toBe('system');
+    expect(capturedMessages[1]?.content).toBe(renderWorkerHandoffMessage(handoff));
+  });
+
+  test('renders non-json-safe artifacts without throwing', () => {
+    const circular: Record<string, unknown> = { label: 'artifact' };
+    circular.self = circular;
+
+    const handoff: WorkerTaskEnvelope = {
+      planContext: {
+        goal: 'Проверить payload',
+        facts: [],
+        constraints: [],
+      },
+      taskInput: {
+        objective: 'Проверь payload',
+        facts: [],
+        constraints: [],
+        expectedOutput: 'status',
+      },
+      upstreamArtifacts: [{ callable: function sample() {}, size: BigInt(17), circular }],
+    };
+
+    const rendered = renderWorkerHandoffMessage(handoff);
+
+    expect(rendered).toContain('"upstreamArtifacts": [');
+    expect(rendered).toContain('"callable": "function sample()');
+    expect(rendered).toContain('"size": "17"');
+    expect(rendered).toContain('"self": "[Circular]"');
+  });
+
   test('deduplicates repeated text, structured, and content payloads in ToolMessage content', async () => {
     let invocationCount = 0;
     const duplicatedText = '{"id":123,"name":"Sample"}';
@@ -33,7 +150,7 @@ describe('createToolLoopGraph', () => {
       }),
     };
 
-    const graph = createToolLoopGraph({
+    const graph = createWorkerLoopGraph({
       model,
       tools: [
         {
@@ -73,7 +190,6 @@ describe('createToolLoopGraph', () => {
     let invocationCount = 0;
     const longString = 'x'.repeat(350);
     const nestedLongString = 'y'.repeat(340);
-    const contentLongString = 'z'.repeat(360);
 
     const model = {
       bindTools: () => ({
@@ -100,7 +216,7 @@ describe('createToolLoopGraph', () => {
       }),
     };
 
-    const graph = createToolLoopGraph({
+    const graph = createWorkerLoopGraph({
       model,
       tools: [
         {
@@ -167,7 +283,7 @@ describe('createToolLoopGraph', () => {
       }),
     };
 
-    const graph = createToolLoopGraph({
+    const graph = createWorkerLoopGraph({
       model,
       tools: [
         {
@@ -216,7 +332,7 @@ describe('createToolLoopGraph', () => {
       }),
     };
 
-    const graph = createToolLoopGraph({
+    const graph = createWorkerLoopGraph({
       model,
       tools: [
         tool(
@@ -255,8 +371,6 @@ describe('createToolLoopGraph', () => {
           if (invocationCount === 1) {
             return new AIMessage({
               content: '',
-              // Some providers serialize tool_call args as a JSON string.
-              // TypeScript types expect an object, so we cast for test simulation.
               tool_calls: [
                 {
                   id: 'call_1',
@@ -271,7 +385,7 @@ describe('createToolLoopGraph', () => {
       }),
     };
 
-    const graph = createToolLoopGraph({
+    const graph = createWorkerLoopGraph({
       model,
       tools: [
         {
