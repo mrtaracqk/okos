@@ -413,4 +413,81 @@ describe('createWorkerLoopGraph', () => {
       status: 'publish',
     });
   });
+
+  test('fails fast on malformed tool_calls.args and does not invoke the tool', async () => {
+    let toolInvokeCount = 0;
+    let invocationCount = 0;
+    const model = {
+      bindTools: () => ({
+        invoke: async () => {
+          invocationCount += 1;
+          if (invocationCount === 1) {
+            return new AIMessage({
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call_1',
+                  name: 'wc_v3_products_list',
+                  args: '{"page":1,"per_page":20',
+                },
+              ] as any,
+            });
+          }
+          return new AIMessage({ content: 'done' });
+        },
+      }),
+    };
+
+    const graph = createWorkerLoopGraph({
+      model,
+      tools: [
+        {
+          name: 'wc_v3_products_list',
+          invoke: async () => {
+            toolInvokeCount += 1;
+            return {
+              ok: true,
+              structured: { result: [] },
+            };
+          },
+        },
+      ],
+      systemPrompt: () => 'system',
+    }).compile();
+
+    const result = await graph.invoke({
+      messages: [new HumanMessage('find JBL Partybox Ultimate')],
+    });
+
+    expect(toolInvokeCount).toBe(0);
+    expect(result.toolRuns).toHaveLength(1);
+    expect(result.toolRuns[0]).toMatchObject({
+      toolName: 'wc_v3_products_list',
+      args: {},
+      status: 'failed',
+      error: {
+        source: 'catalog-worker',
+        type: 'invalid_tool_args',
+        code: 'invalid_tool_args',
+        retryable: false,
+      },
+    });
+
+    const toolMessage = result.messages.find((message) => message instanceof ToolMessage);
+    const payload = JSON.parse(String(toolMessage?.content)) as Record<string, any>;
+
+    expect(payload).toMatchObject({
+      ok: false,
+      structured: {
+        rawArgs: '{"page":1,"per_page":20',
+      },
+      error: {
+        source: 'catalog-worker',
+        type: 'invalid_tool_args',
+        code: 'invalid_tool_args',
+        retryable: false,
+      },
+    });
+    expect(payload.error.message).toContain('tool_call.args is not valid JSON');
+  });
 });

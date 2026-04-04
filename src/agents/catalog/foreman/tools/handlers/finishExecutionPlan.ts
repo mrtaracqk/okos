@@ -2,10 +2,7 @@ import {
   buildTraceAttributes,
   runToolSpan,
 } from '../../../../../observability/traceContext';
-import {
-  getPlanningRuntime,
-  getPlanningRunContext,
-} from '../../../../../runtime/planning';
+import { type CatalogPlanningDeps } from '../../runtimePlan/planningDeps';
 import { getCatalogAgentRuntimeRunId } from '../../runtimePlan/runtimePlanService';
 import { finishExecutionPlanInputSchema } from '../definitions/executionPlanTools';
 import {
@@ -18,6 +15,7 @@ import {
 import { type CatalogToolCall, type CatalogToolExecutionResult } from '../types';
 
 export async function handleFinishExecutionPlanToolCall(
+  planningDeps: CatalogPlanningDeps,
   toolCall: CatalogToolCall
 ): Promise<CatalogToolExecutionResult> {
   const parsedArgs = finishExecutionPlanInputSchema.safeParse(toolCall.args ?? {});
@@ -35,9 +33,9 @@ export async function handleFinishExecutionPlanToolCall(
         };
       }
 
-      const planningRuntime = getPlanningRuntime();
-      const runId = getCatalogAgentRuntimeRunId();
-      if (!getPlanningRunContext() || !runId) {
+      const planningRuntime = planningDeps.planningRuntime;
+      const runId = getCatalogAgentRuntimeRunId(planningDeps);
+      if (!planningDeps.resolveRunContext() || !runId) {
         return {
           toolMessage: toolReply(toolCall, PLANNING_RUNTIME_UNAVAILABLE_MESSAGE),
         };
@@ -54,7 +52,7 @@ export async function handleFinishExecutionPlanToolCall(
               summary,
               finalizeOutcome: 'completed',
             },
-            clearExecutionSnapshot: true,
+            clearExecutionResult: true,
           };
         }
 
@@ -65,7 +63,7 @@ export async function handleFinishExecutionPlanToolCall(
             summary,
             finalizeOutcome: 'failed',
           },
-          clearExecutionSnapshot: true,
+          clearExecutionResult: true,
         };
       } catch (error) {
         return {

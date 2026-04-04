@@ -14,7 +14,8 @@ describe('catalog prompts stage 4-5', () => {
     expect(prompt).toContain('Не разбивай её на микрошаги вроде «найди category_id»');
     expect(prompt).toContain('**Artifacts** из последнего успешного шага runtime может передать только в **следующий** шаг как `upstreamArtifacts`.');
     expect(prompt).toContain('planContext');
-    expect(prompt).toContain('Execution Snapshot');
+    expect(prompt).toContain('catalog_execution_v2');
+    expect(prompt).toContain('next_action.tool');
     expect(prompt).not.toContain('structured payload WORKER_RESULT');
   });
 

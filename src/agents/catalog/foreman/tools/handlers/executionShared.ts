@@ -1,25 +1,30 @@
 import { type WorkerRun } from '../../../contracts/workerRun';
 import {
-  buildExecutionSnapshot,
-  buildExecutionSnapshotAdditionalKwargs,
-  renderExecutionSnapshot,
-} from '../../executionSnapshot';
+  buildExecutionResult,
+  buildExecutionResultAdditionalKwargs,
+  serializeExecutionResult,
+  type ExecutionPlanEvent,
+} from '../../executionResult';
 import {
   runInProgressPlanTaskAndSyncRuntime,
   type PlannerExecutionToolPhase,
 } from '../../runtimePlan/runtimePlanService';
+import { type CatalogPlanningDeps } from '../../runtimePlan/planningDeps';
 import { toolReplyWithMetadata } from '../protocol';
 import { type CatalogToolCall, type CatalogToolExecutionResult } from '../types';
 
 export async function executePreparedPlanTask(params: {
+  planningDeps: Pick<CatalogPlanningDeps, 'planningRuntime'>;
   runId: string;
   workerRuns: WorkerRun[];
   toolCall: CatalogToolCall;
   phase: PlannerExecutionToolPhase;
+  planEvent: ExecutionPlanEvent;
   executionSessionId: string;
   revision: number;
 }): Promise<CatalogToolExecutionResult> {
   const exec = await runInProgressPlanTaskAndSyncRuntime({
+    planningDeps: params.planningDeps,
     runId: params.runId,
     workerRuns: params.workerRuns,
     replyToToolCall: params.toolCall,
@@ -30,10 +35,11 @@ export async function executePreparedPlanTask(params: {
   }
 
   const { run, planAfterWorker, completedTaskId } = exec;
-  const snapshot = buildExecutionSnapshot({
+  const executionResult = buildExecutionResult({
+    phase: params.phase,
+    planEvent: params.planEvent,
     executionSessionId: params.executionSessionId,
     revision: params.revision,
-    lastTool: params.phase,
     completedTaskId,
     plan: planAfterWorker,
     run,
@@ -43,9 +49,9 @@ export async function executePreparedPlanTask(params: {
     run,
     toolMessage: toolReplyWithMetadata(
       params.toolCall,
-      renderExecutionSnapshot(snapshot),
-      buildExecutionSnapshotAdditionalKwargs(snapshot)
+      serializeExecutionResult(executionResult),
+      buildExecutionResultAdditionalKwargs(executionResult)
     ),
-    executionSnapshot: snapshot,
+    executionResult,
   };
 }

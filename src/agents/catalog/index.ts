@@ -1,4 +1,4 @@
-export { catalogAgentGraph } from './foreman';
+export { createCatalogAgentGraph, createDefaultCatalogPlanningDeps } from './foreman';
 export {
   buildCatalogDelegationResultFromCatalogState,
   CATALOG_SUCCESS_USER_PREFIX,

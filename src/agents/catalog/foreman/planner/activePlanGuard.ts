@@ -5,7 +5,7 @@ import {
   runLlmSpan,
   summarizeToolCallNames,
 } from '../../../../observability/traceContext';
-import { getPlanningRuntime } from '../../../../runtime/planning';
+import { type CatalogPlanningDeps } from '../runtimePlan/planningDeps';
 import { getCatalogAgentRuntimeRunId } from '../runtimePlan/runtimePlanService';
 
 function buildActivePlanCorrectionMessage(activePlanSummary: string) {
@@ -22,8 +22,11 @@ function buildActivePlanCorrectionMessage(activePlanSummary: string) {
   );
 }
 
-export function formatActivePlanTaskSummary(runId: string): string | null {
-  const activePlan = getPlanningRuntime().getActivePlan(runId);
+export function formatActivePlanTaskSummary(
+  planningRuntime: CatalogPlanningDeps['planningRuntime'],
+  runId: string
+): string | null {
+  const activePlan = planningRuntime.getActivePlan(runId);
   if (!activePlan) {
     return null;
   }
@@ -40,6 +43,7 @@ type PlannerRunnableModel = {
 };
 
 export async function applyActivePlanGuard(params: {
+  planningDeps: CatalogPlanningDeps;
   iteration: number;
   workerRunsCount: number;
   promptPrefixMessages: BaseMessage[];
@@ -52,10 +56,11 @@ export async function applyActivePlanGuard(params: {
   toolCalls: AIMessage['tool_calls'];
   activePlanSummaryStillOpen: string | null;
 }> {
-  const { iteration, workerRunsCount, promptPrefixMessages, stateMessages, response, runnableModel } = params;
+  const { planningDeps, iteration, workerRunsCount, promptPrefixMessages, stateMessages, response, runnableModel } =
+    params;
   const toolCalls = Array.isArray(response.tool_calls) ? response.tool_calls : [];
-  const runId = getCatalogAgentRuntimeRunId();
-  const activePlanSummary = runId ? formatActivePlanTaskSummary(runId) : null;
+  const runId = getCatalogAgentRuntimeRunId(planningDeps);
+  const activePlanSummary = runId ? formatActivePlanTaskSummary(planningDeps.planningRuntime, runId) : null;
 
   if (toolCalls.length > 0 || !activePlanSummary) {
     return {
@@ -94,6 +99,6 @@ export async function applyActivePlanGuard(params: {
     messages: [response, correctedResponse],
     response: correctedResponse,
     toolCalls: correctedToolCalls,
-    activePlanSummaryStillOpen: runId ? formatActivePlanTaskSummary(runId) : null,
+    activePlanSummaryStillOpen: runId ? formatActivePlanTaskSummary(planningDeps.planningRuntime, runId) : null,
   };
 }

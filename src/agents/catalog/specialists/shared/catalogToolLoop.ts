@@ -1,16 +1,15 @@
 import type { WorkerTaskEnvelope } from '../../contracts/workerRequest';
 import {
   normalizeWorkerResult,
-  workerResultToEnvelope,
   WORKER_RESULT_TOOL_NAME,
-  type WorkerResultEnvelope,
+  type WorkerResult,
 } from '../../contracts/workerResult';
 import { toJsonSafeValue } from '../../../shared/jsonSafe';
 import { type ToolRun } from '../../../shared/toolRun';
 import { createWorkerLoopGraph, type CreateWorkerLoopGraphOptions } from './workerLoopGraph';
 
 type CreateCatalogToolLoopGraphOptions = Omit<
-  CreateWorkerLoopGraphOptions<WorkerTaskEnvelope, WorkerResultEnvelope>,
+  CreateWorkerLoopGraphOptions<WorkerTaskEnvelope, WorkerResult>,
   'extractFinalResult' | 'renderHandoffMessage'
 >;
 
@@ -41,13 +40,12 @@ export function renderWorkerHandoffMessage(handoff: WorkerTaskEnvelope): string 
   ].join('\n');
 }
 
-function extractCatalogFinalResult(toolRun: ToolRun): WorkerResultEnvelope | null {
+function extractCatalogFinalResult(toolRun: ToolRun): WorkerResult | null {
   if (toolRun.toolName !== WORKER_RESULT_TOOL_NAME || toolRun.status !== 'completed' || toolRun.structured == null) {
     return null;
   }
 
-  const result = normalizeWorkerResult(toolRun.structured);
-  return result ? workerResultToEnvelope(result) : null;
+  return normalizeWorkerResult(toolRun.structured);
 }
 
 export function createCatalogToolLoopGraph(options: CreateCatalogToolLoopGraphOptions) {

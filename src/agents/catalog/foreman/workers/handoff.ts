@@ -17,7 +17,13 @@ import {
 } from './runState';
 import { toolReply } from '../tools/protocol';
 import { type CatalogToolCall } from '../tools/types';
-import { extractWorkerResult, workerResultToEnvelope, renderWorkerResult, renderWorkerResultEnvelopeSummary } from '../../contracts/workerResult';
+import {
+  extractWorkerResult,
+  normalizeWorkerResult,
+  renderWorkerResult,
+  renderWorkerResultEnvelopeSummary,
+  WORKER_RESULT_TOOL_NAME,
+} from '../../contracts/workerResult';
 
 function formatEnvelopeLines(lines: string[]): string | undefined {
   if (lines.length === 0) return undefined;
@@ -26,6 +32,10 @@ function formatEnvelopeLines(lines: string[]): string | undefined {
 
 export function buildMissingWorkerResultNotice(workerName: string) {
   return `Протокол воркера нарушен: "${workerName}" завершил работу без финального report_worker_result. Используй этот текст только как промежуточный сигнал и при необходимости перепоручи следующий шаг явно.`;
+}
+
+function buildInvalidWorkerResultNotice(workerName: string) {
+  return `Протокол воркера нарушен: "${workerName}" прислал невалидный report_worker_result. Runtime не будет восстанавливать результат по summary или косвенным признакам.`;
 }
 
 export async function executeWorkerHandoff(params: {
@@ -107,18 +117,24 @@ export async function executeWorkerHandoff(params: {
 
         const rawWorkerToolRuns = Array.isArray(result.toolRuns) ? result.toolRuns : [];
         const toolRunCount = rawWorkerToolRuns.length;
-        const workerResult = extractWorkerResult(rawWorkerToolRuns);
-        const runResult =
-          result.finalResult != null ? result.finalResult : (workerResult ? workerResultToEnvelope(workerResult) : undefined);
+        const workerResult = extractWorkerResult(rawWorkerToolRuns) ?? normalizeWorkerResult(result.finalResult);
+        const hasReportWorkerResultToolRun = rawWorkerToolRuns.some((toolRun) => toolRun.toolName === WORKER_RESULT_TOOL_NAME);
         const workerFailure = getLastNonReportFailure(rawWorkerToolRuns);
-        const runStatus = resolveWorkerRunStatus(rawWorkerToolRuns, runResult?.status ?? workerResult?.status);
-        const runStatusFinal = runResult === undefined && runStatus === 'completed' ? 'failed' : runStatus;
+        const protocolError =
+          workerResult == null
+            ? {
+                code: hasReportWorkerResultToolRun
+                  ? ('invalid_report_worker_result' as const)
+                  : ('missing_report_worker_result' as const),
+                message: hasReportWorkerResultToolRun
+                  ? buildInvalidWorkerResultNotice(workerId)
+                  : buildMissingWorkerResultNotice(workerId),
+              }
+            : undefined;
+        const runStatus = resolveWorkerRunStatus(rawWorkerToolRuns, workerResult?.status);
+        const runStatusFinal = workerResult == null && runStatus === 'completed' ? 'failed' : runStatus;
         const summaryForTrace =
-          workerResult != null
-            ? renderWorkerResult(workerResult)
-            : runResult != null
-              ? renderWorkerResultEnvelopeSummary(runResult)
-              : buildMissingWorkerResultNotice(workerId);
+          workerResult != null ? renderWorkerResult(workerResult) : (protocolError?.message ?? buildMissingWorkerResultNotice(workerId));
         const errorSummary =
           runStatusFinal === 'failed' && workerFailure
             ? `${summaryForTrace}\n\n${formatWorkerFailure(workerFailure)}`
@@ -128,13 +144,23 @@ export async function executeWorkerHandoff(params: {
         const run: WorkerRun = {
           agent: workerId,
           ...(errorSummary ? { errorSummary } : {}),
-          ...(runResult ? { result: runResult } : {}),
+          ...(protocolError ? { protocolError } : {}),
+          ...(workerResult ? { result: workerResult } : {}),
           status: runStatusFinal,
           task: objective,
           toolRunCount,
         };
         const toolMessageContent =
-          runResult !== undefined ? renderWorkerResultEnvelopeSummary(runResult) : buildMissingWorkerResultNotice(workerId);
+          workerResult != null
+            ? renderWorkerResultEnvelopeSummary({
+                status: workerResult.status,
+                facts: workerResult.data,
+                missingInputs: workerResult.missingData,
+                blocker: workerResult.blocker ?? null,
+                artifacts: workerResult.artifacts,
+                summary: workerResult.summary ?? workerResult.note,
+              })
+            : (protocolError?.message ?? buildMissingWorkerResultNotice(workerId));
         addTraceEvent('worker.result_reported', {
           from_agent: `worker.${workerId}`,
           to_agent: 'catalog_agent.planner',
@@ -181,7 +207,16 @@ export async function executeWorkerHandoff(params: {
         'catalog.return_contract': expectedOutput ? formatTraceText(expectedOutput, 800) : undefined,
       }),
       mapResultAttributes: ({ run }) => {
-        const traceOutput = run.result ? renderWorkerResultEnvelopeSummary(run.result) : run.errorSummary;
+        const traceOutput = run.result
+          ? renderWorkerResultEnvelopeSummary({
+              status: run.result.status,
+              facts: run.result.data,
+              missingInputs: run.result.missingData,
+              blocker: run.result.blocker ?? null,
+              artifacts: run.result.artifacts,
+              summary: run.result.summary ?? run.result.note,
+            })
+          : run.errorSummary;
         return buildTraceAttributes({
           'catalog.status': run.status,
           'catalog.worker_name': run.agent,

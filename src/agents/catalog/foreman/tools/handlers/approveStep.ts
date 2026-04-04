@@ -1,12 +1,12 @@
 import { runToolSpan } from '../../../../../observability/traceContext';
-import { getPlanningRuntime } from '../../../../../runtime/planning';
 import { type WorkerRun } from '../../../contracts/workerRun';
+import { type CatalogPlanningDeps } from '../../runtimePlan/planningDeps';
 import { promoteNextPendingTaskToInProgress } from '../../runtimePlan/runtimePlanMapper';
 import { getNextApprovableTask, getNextPendingTask } from '../../runtimePlan/selectors';
 import { getCatalogAgentRuntimeRunId } from '../../runtimePlan/runtimePlanService';
 import { approveStepInputSchema } from '../definitions/executionPlanTools';
 import {
-  ACTIVE_PLAN_SNAPSHOT_PROTOCOL_ERROR,
+  ACTIVE_PLAN_EXECUTION_RESULT_PROTOCOL_ERROR,
   buildExecutionToolResultAttributes,
   buildExecutionToolStatusMessage,
   getToolMessageText,
@@ -17,6 +17,7 @@ import { type CatalogToolCall, type CatalogToolExecutionContext, type CatalogToo
 import { executePreparedPlanTask } from './executionShared';
 
 export async function handleApproveStepToolCall(
+  planningDeps: CatalogPlanningDeps,
   toolCall: CatalogToolCall,
   workerRuns: WorkerRun[],
   executionContext: CatalogToolExecutionContext
@@ -35,8 +36,8 @@ export async function handleApproveStepToolCall(
         };
       }
 
-      const planningRuntime = getPlanningRuntime();
-      const runId = getCatalogAgentRuntimeRunId();
+      const planningRuntime = planningDeps.planningRuntime;
+      const runId = getCatalogAgentRuntimeRunId(planningDeps);
       if (!runId) {
         return {
           toolMessage: toolReply(toolCall, PLANNING_RUNTIME_UNAVAILABLE_MESSAGE),
@@ -48,8 +49,8 @@ export async function handleApproveStepToolCall(
         if (!activePlan) {
           throw new Error('approve_step стал недоступен до исполнения: активный план не найден.');
         }
-        if (!executionContext.activeExecutionSnapshot) {
-          throw new Error(ACTIVE_PLAN_SNAPSHOT_PROTOCOL_ERROR);
+        if (!executionContext.activeExecutionResult) {
+          throw new Error(ACTIVE_PLAN_EXECUTION_RESULT_PROTOCOL_ERROR);
         }
 
         const nextPendingTask = getNextPendingTask(activePlan);
@@ -68,12 +69,14 @@ export async function handleApproveStepToolCall(
         });
 
         return executePreparedPlanTask({
+          planningDeps,
           runId,
           workerRuns,
           toolCall,
           phase: 'approve_step',
-          executionSessionId: executionContext.activeExecutionSnapshot.executionSessionId,
-          revision: executionContext.activeExecutionSnapshot.revision + 1,
+          planEvent: 'advanced',
+          executionSessionId: executionContext.activeExecutionResult.executionSessionId,
+          revision: executionContext.activeExecutionResult.revision + 1,
         });
       } catch (error) {
         return {

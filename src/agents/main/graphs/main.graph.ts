@@ -2,7 +2,8 @@ import { AIMessage, BaseMessage, HumanMessage, ToolMessage } from '@langchain/co
 import { END, START, StateGraph, getConfig } from '@langchain/langgraph';
 import {
   buildCatalogDelegationResultFromCatalogState,
-  catalogAgentGraph,
+  createCatalogAgentGraph,
+  createDefaultCatalogPlanningDeps,
   formatCatalogDelegationUserMessage,
   type CatalogDelegationResult,
 } from '../../catalog';
@@ -28,6 +29,13 @@ import {
 type CreateConfiguredMainGraphOptions = CreateMainGraphOptions & {
   progressReporter?: MainGraphProgressReporter;
 };
+
+const catalogAgentGraph = createCatalogAgentGraph(createDefaultCatalogPlanningDeps());
+
+function getMainGraphRuntimeRunId(): string | undefined {
+  const threadId = getConfig()?.configurable?.thread_id;
+  return typeof threadId === 'string' && threadId.length > 0 ? threadId : undefined;
+}
 
 const getMainRoute = async (state: MainGraphState, progressReporter: MainGraphProgressReporter) => {
   const lastMessage = getLastAIMessage(state.messages);
@@ -85,8 +93,10 @@ function createCatalogAgentNode(progressReporter: MainGraphProgressReporter) {
           };
         }
 
+        const runId = getMainGraphRuntimeRunId();
         await progressReporter.onCatalogDelegation({
           chatId: state.chatId,
+          runId,
           statusText,
         });
 

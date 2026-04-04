@@ -47,7 +47,7 @@ export const newExecutionPlanTool = tool(
   {
     name: 'new_execution_plan',
     description:
-      'Зафиксируй или полностью замени executable snapshot плана и запусти первую подзадачу (первая задача в списке становится in_progress). Передай общий planContext (goal/facts/constraints) для всего плана и step-local inputData у задач. Новый план всегда чистый: runtime сбросит artifacts от предыдущего плана. Если последний шаг уже успешен и следующий pending шаг можно выполнить с текущим snapshot — не пересоздавай план, вызови approve_step. Tool result уже содержит актуальный Execution Snapshot; отдельного HumanMessage после вызова не будет.',
+      'Зафиксируй или полностью замени executable plan и запусти первую подзадачу (первая задача в списке становится in_progress). Передай общий planContext (goal/facts/constraints) для всего плана и step-local inputData у задач. Новый план всегда чистый: runtime сбросит artifacts от предыдущего плана. Если последний шаг уже успешен и следующий pending шаг можно выполнить с текущим execution result — не пересоздавай план, вызови approve_step. Tool result вернёт только JSON payload `catalog_execution_v2`; отдельного HumanMessage после вызова не будет.',
     schema: newExecutionPlanInputSchema,
   }
 );
@@ -59,7 +59,7 @@ export const approveStepTool = tool(
   {
     name: 'approve_step',
     description:
-      'Продолжить план после результата воркера: runtime переводит следующую pending задачу в работу и запускает её. Следующий воркер получит planContext текущего плана, step-local inputData своей задачи и upstreamArtifacts только от непосредственно предыдущего completed шага, если они были. Вызывай по умолчанию, если последний успешный шаг не требует менять planContext/tasks. Чтобы обновить общий контекст плана или хвост шагов — new_execution_plan; чтобы закончить работу — finish_execution_plan. Tool result уже содержит обновлённый Execution Snapshot; отдельного HumanMessage после вызова не будет.',
+      'Продолжить план после результата воркера: runtime переводит следующую pending задачу в работу и запускает её. Следующий воркер получит planContext текущего плана, step-local inputData своей задачи и upstreamArtifacts только от непосредственно предыдущего completed шага, если они были. Вызывай по умолчанию, если `next_action.tool=approve_step` и не нужно менять planContext/tasks. Чтобы обновить общий контекст плана или хвост шагов — new_execution_plan; чтобы закончить работу — finish_execution_plan. Tool result вернёт только JSON payload `catalog_execution_v2`; отдельного HumanMessage после вызова не будет.',
     schema: approveStepInputSchema,
   }
 );

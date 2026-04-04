@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
+import { type CatalogPlanningDeps } from '../runtimePlan/planningDeps';
 
-let catalogAgentGraph: (typeof import('./catalogForemanGraph.js'))['catalogAgentGraph'];
+let createCatalogAgentGraph: (typeof import('./catalogForemanGraph.js'))['createCatalogAgentGraph'];
 let getPostDispatchRoute: (typeof import('./catalogForemanGraph.js'))['getPostDispatchRoute'];
 
 beforeAll(async () => {
@@ -10,12 +11,35 @@ beforeAll(async () => {
   process.env.OPENAI_UTILITY_MODEL_NAME ??= 'gpt-4o-mini';
 
   const module = await import('./catalogForemanGraph.js');
-  catalogAgentGraph = module.catalogAgentGraph;
+  createCatalogAgentGraph = module.createCatalogAgentGraph;
   getPostDispatchRoute = module.getPostDispatchRoute;
 });
 
+function getPlanningDeps(): CatalogPlanningDeps {
+  return {
+    planningRuntime: {
+      getActivePlan: () => null,
+      createPlan: async () => {
+        throw new Error('not implemented');
+      },
+      updatePlan: async () => {
+        throw new Error('not implemented');
+      },
+      completePlan: async () => {
+        throw new Error('not implemented');
+      },
+      failPlan: async () => {
+        throw new Error('not implemented');
+      },
+      finalizeDanglingPlan: async () => {},
+    },
+    resolveRunContext: () => ({ runId: 'run-1', chatId: 1 }),
+  };
+}
+
 describe('catalogAgentGraph', () => {
   test('exposes the compiled runtime surface', () => {
+    const catalogAgentGraph = createCatalogAgentGraph(getPlanningDeps());
     expect(catalogAgentGraph).toBeDefined();
     expect(typeof catalogAgentGraph.invoke).toBe('function');
   });

@@ -31,10 +31,10 @@ function formatTask(task: RuntimePlanTask) {
 }
 
 export function renderRuntimePlan(plan: RuntimePlan) {
-  const lines = [];
+  const lines = [`Статус: ${planStatusLabels[plan.status]}`];
 
-  if (plan.status !== 'active') {
-    lines.push(`Статус: ${planStatusLabels[plan.status]}`);
+  if (plan.status === 'active' && plan.tasks.some((task) => task.status === 'in_progress')) {
+    lines.push('Сейчас выполняется шаг, отмеченный 🔄.');
   }
 
   lines.push('');

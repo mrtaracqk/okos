@@ -17,7 +17,7 @@ export type WorkerResultBlocker = {
 
 /**
  * Shared envelope for worker result. Single canonical shape without
- * scenario-specific schemas. Used in state and tracing.
+ * scenario-specific schemas. Kept for trace/log helpers and compatibility.
  */
 export type WorkerResultEnvelope = {
   status: WorkerResultStatus;
@@ -121,7 +121,7 @@ export function normalizeWorkerResult(value: unknown): WorkerResult | null {
   };
 }
 
-/** Convert tool result to shared envelope for state and tracing. */
+/** Convert tool result to shared envelope for trace/log helpers. */
 export function workerResultToEnvelope(result: WorkerResult): WorkerResultEnvelope {
   return {
     status: result.status,
@@ -157,8 +157,7 @@ export function renderWorkerResult(result: WorkerResult) {
 }
 
 /**
- * Short derived summary from the result envelope for ToolMessage.content.
- * Source of truth remains the envelope in state; this is for planner readability only.
+ * Short derived summary from the result envelope for trace/log-oriented text.
  */
 export function renderWorkerResultEnvelopeSummary(envelope: WorkerResultEnvelope): string {
   const statusLine = `Статус: ${envelope.status}`;

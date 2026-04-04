@@ -1,7 +1,8 @@
 import { BaseCheckpointSaver, END, START, StateGraph } from '@langchain/langgraph';
-import { dispatchToolsNode } from './dispatchNode';
-import { finalizeNode, raiseFatalErrorNode } from './finalizeNode';
-import { plannerLimitFallbackNode, plannerNode } from './plannerNode';
+import { type CatalogPlanningDeps } from '../runtimePlan/planningDeps';
+import { createDispatchToolsNode } from './dispatchNode';
+import { createFinalizeNode, raiseFatalErrorNode } from './finalizeNode';
+import { createPlannerLimitFallbackNode, createPlannerNode } from './plannerNode';
 import { type CatalogGraphState, CatalogGraphStateAnnotation } from './state';
 
 export function getPlannerRoute(state: CatalogGraphState) {
@@ -23,29 +24,31 @@ export function getPostFinalizeRoute(state: CatalogGraphState) {
 const checkpointer: BaseCheckpointSaver | boolean = true;
 const name = 'catalog-agent';
 
-export const catalogAgentGraph = new StateGraph(CatalogGraphStateAnnotation)
-  .addNode('planner', plannerNode)
-  .addNode('dispatchTools', dispatchToolsNode)
-  .addNode('plannerLimitFallback', plannerLimitFallbackNode)
-  .addNode('finalize', finalizeNode)
-  .addNode('raiseFatalError', raiseFatalErrorNode)
-  .addEdge(START, 'planner')
-  .addConditionalEdges('planner', getPlannerRoute, {
-    dispatchTools: 'dispatchTools',
-    plannerLimitFallback: 'plannerLimitFallback',
-    finalize: 'finalize',
-  })
-  .addConditionalEdges('dispatchTools', getPostDispatchRoute, {
-    planner: 'planner',
-    finalize: 'finalize',
-  })
-  .addEdge('plannerLimitFallback', 'finalize')
-  .addConditionalEdges('finalize', getPostFinalizeRoute, {
-    raiseFatalError: 'raiseFatalError',
-    end: END,
-  })
-  .compile({
-    checkpointer,
-    name,
-    description: 'Агент-бригадир каталога с явным planner-dispatch циклом и отдельной финализацией плана.',
-  });
+export function createCatalogAgentGraph(planningDeps: CatalogPlanningDeps) {
+  return new StateGraph(CatalogGraphStateAnnotation)
+    .addNode('planner', createPlannerNode(planningDeps))
+    .addNode('dispatchTools', createDispatchToolsNode(planningDeps))
+    .addNode('plannerLimitFallback', createPlannerLimitFallbackNode(planningDeps))
+    .addNode('finalize', createFinalizeNode(planningDeps))
+    .addNode('raiseFatalError', raiseFatalErrorNode)
+    .addEdge(START, 'planner')
+    .addConditionalEdges('planner', getPlannerRoute, {
+      dispatchTools: 'dispatchTools',
+      plannerLimitFallback: 'plannerLimitFallback',
+      finalize: 'finalize',
+    })
+    .addConditionalEdges('dispatchTools', getPostDispatchRoute, {
+      planner: 'planner',
+      finalize: 'finalize',
+    })
+    .addEdge('plannerLimitFallback', 'finalize')
+    .addConditionalEdges('finalize', getPostFinalizeRoute, {
+      raiseFatalError: 'raiseFatalError',
+      end: END,
+    })
+    .compile({
+      checkpointer,
+      name,
+      description: 'Агент-бригадир каталога с явным planner-dispatch циклом и отдельной финализацией плана.',
+    });
+}

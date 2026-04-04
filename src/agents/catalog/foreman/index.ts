@@ -1,1 +1,2 @@
-export { catalogAgentGraph } from './graph/catalogForemanGraph';
+export { createCatalogAgentGraph } from './graph/catalogForemanGraph';
+export { createDefaultCatalogPlanningDeps } from './runtimePlan/planningDeps';

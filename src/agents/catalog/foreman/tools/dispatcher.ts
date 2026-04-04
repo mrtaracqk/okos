@@ -1,5 +1,6 @@
 import { ToolMessage } from '@langchain/core/messages';
 import { type WorkerRun } from '../../contracts/workerRun';
+import { type CatalogPlanningDeps } from '../runtimePlan/planningDeps';
 import { resolveCatalogForemanToolRegistration } from './availability';
 import { toolReply } from './protocol';
 import { type CatalogToolCall, type CatalogToolCompletion, type CatalogToolExecutionContext } from './types';
@@ -7,6 +8,7 @@ import { type CatalogToolCall, type CatalogToolCompletion, type CatalogToolExecu
 export type { CatalogToolCompletion } from './types';
 
 export async function executeCatalogToolCall(
+  planningDeps: CatalogPlanningDeps,
   toolCall: CatalogToolCall,
   workerRuns: WorkerRun[],
   executionContext: CatalogToolExecutionContext
@@ -14,8 +16,8 @@ export async function executeCatalogToolCall(
   run?: WorkerRun;
   toolMessage: ToolMessage;
   completion?: CatalogToolCompletion;
-  executionSnapshot?: import('../executionSnapshot').ExecutionSnapshot;
-  clearExecutionSnapshot?: boolean;
+  executionResult?: import('../executionResult').CatalogExecutionResult;
+  clearExecutionResult?: boolean;
 }> {
   const registration = resolveCatalogForemanToolRegistration(toolCall.name);
   if (!registration) {
@@ -24,5 +26,5 @@ export async function executeCatalogToolCall(
     };
   }
 
-  return registration.execute(toolCall, workerRuns, executionContext);
+  return registration.execute(planningDeps, toolCall, workerRuns, executionContext);
 }

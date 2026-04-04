@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { PlanningCore } from '../../../../runtime/planning/core';
-import { type ExecutionSnapshot } from '../executionSnapshot';
+import { type CatalogExecutionResult } from '../executionResult';
+import { type CatalogPlanningDeps } from '../runtimePlan/planningDeps';
 import { approveStepTool, finishExecutionPlanTool, newExecutionPlanTool } from './definitions/executionPlanTools';
 
 type PlanningRunContext = {
@@ -12,12 +13,13 @@ type FakeWorkerResult = {
   toolRuns?: Array<Record<string, unknown>>;
   finalResult?: {
     status: 'completed' | 'failed';
-    facts: string[];
-    missingInputs: string[];
+    data: string[];
+    missingData: string[];
+    note?: string | null;
     blocker?: { kind: string; owner: string; reason: string } | null;
     artifacts?: unknown[];
     summary?: string | null;
-  };
+  } | null;
   error?: Error;
 };
 
@@ -25,12 +27,7 @@ let planningRuntime: PlanningCore;
 let planningRunContext: PlanningRunContext | null;
 let workerInvocations: Array<{ workerId: string; payload: unknown; config: unknown }>;
 let workerResults: Map<string, FakeWorkerResult>;
-let executionContext: { activeExecutionSnapshot: ExecutionSnapshot | null };
-
-mock.module('../../../../runtime/planning', () => ({
-  getPlanningRuntime: () => planningRuntime,
-  getPlanningRunContext: () => planningRunContext,
-}));
+let executionContext: { activeExecutionResult: CatalogExecutionResult | null };
 
 mock.module('../workers/registry', () => ({
   resolveCatalogForemanWorker(workerId: string) {
@@ -83,7 +80,14 @@ mock.module('../../../../observability/traceContext', () => ({
 }));
 
 let executeCatalogToolCall: typeof import('./dispatcher').executeCatalogToolCall;
-let dispatchToolsNode: typeof import('../graph/dispatchNode').dispatchToolsNode;
+let createDispatchToolsNode: typeof import('../graph/dispatchNode').createDispatchToolsNode;
+
+function getPlanningDeps(): CatalogPlanningDeps {
+  return {
+    planningRuntime,
+    resolveRunContext: () => planningRunContext,
+  };
+}
 
 function buildNewExecutionPlanCall(tasks: Array<Record<string, unknown>>) {
   return {
@@ -100,26 +104,30 @@ function buildNewExecutionPlanCall(tasks: Array<Record<string, unknown>>) {
   };
 }
 
-function syncExecutionContext(snapshot: ExecutionSnapshot | undefined, clearExecutionSnapshot: boolean | undefined) {
-  if (clearExecutionSnapshot) {
-    executionContext = { activeExecutionSnapshot: null };
+function syncExecutionContext(result: CatalogExecutionResult | undefined, clearExecutionResult: boolean | undefined) {
+  if (clearExecutionResult) {
+    executionContext = { activeExecutionResult: null };
     return;
   }
 
-  if (snapshot) {
-    executionContext = { activeExecutionSnapshot: snapshot };
+  if (result) {
+    executionContext = { activeExecutionResult: result };
   }
 }
 
-async function executeToolCall(toolCall: Parameters<typeof executeCatalogToolCall>[0], workerRuns: Parameters<typeof executeCatalogToolCall>[1]) {
-  const result = await executeCatalogToolCall(toolCall, workerRuns, executionContext);
-  syncExecutionContext(result.executionSnapshot, result.clearExecutionSnapshot);
+function parseExecutionToolPayload(content: unknown) {
+  return JSON.parse(typeof content === 'string' ? content : JSON.stringify(content)) as CatalogExecutionResult;
+}
+
+async function executeToolCall(toolCall: Parameters<typeof executeCatalogToolCall>[1], workerRuns: Parameters<typeof executeCatalogToolCall>[2]) {
+  const result = await executeCatalogToolCall(getPlanningDeps(), toolCall, workerRuns, executionContext);
+  syncExecutionContext(result.executionResult, result.clearExecutionResult);
   return result;
 }
 
 beforeAll(async () => {
   ({ executeCatalogToolCall } = await import('./dispatcher.js'));
-  ({ dispatchToolsNode } = await import('../graph/dispatchNode.js'));
+  ({ createDispatchToolsNode } = await import('../graph/dispatchNode.js'));
 });
 
 beforeEach(() => {
@@ -130,17 +138,18 @@ beforeEach(() => {
   };
   workerInvocations = [];
   workerResults = new Map();
-  executionContext = { activeExecutionSnapshot: null };
+  executionContext = { activeExecutionResult: null };
 });
 
 describe('executeCatalogToolCall', () => {
-  test('new_execution_plan creates a session, returns snapshot rev=1, and does not append HumanMessage feedback', async () => {
+  test('new_execution_plan creates a session, runs the first worker immediately, and returns one JSON execution result', async () => {
     workerResults.set('product-worker', {
       finalResult: {
         status: 'completed',
-        facts: ['product_id=101', 'sku=IP-17'],
-        missingInputs: [],
-        artifacts: [{ product_id: 101, sku: 'IP-17' }],
+        data: ['product_id=101', 'sku=IP-17'],
+        missingData: [],
+        note: 'lookup done',
+        artifacts: [{ product_id: 101, sku: 'IP-17', payload: { nested: ['a', 'b'] } }],
         summary: 'Товар найден и подтвержден.',
       },
     });
@@ -156,7 +165,7 @@ describe('executeCatalogToolCall', () => {
             constraints: ['read-only'],
             contextNotes: 'Сначала нужен lookup',
           },
-          responseStructure: 'status, facts, missingInputs, summary',
+          responseStructure: 'status, data, missingData, summary',
         },
         {
           taskId: 'task-2',
@@ -166,19 +175,43 @@ describe('executeCatalogToolCall', () => {
             facts: ['product_id=101'],
             constraints: ['read-only'],
           },
-          responseStructure: 'status, facts, missingInputs, summary',
+          responseStructure: 'status, data, missingData, summary',
         },
       ]),
       []
     );
 
+    const payload = parseExecutionToolPayload(result.toolMessage.content);
+
     expect(result.run?.status).toBe('completed');
-    expect(result.executionSnapshot?.revision).toBe(1);
-    expect(result.executionSnapshot?.nextAction).toBe('approve_step');
-    expect(result.executionSnapshot?.upstreamArtifactsCount).toBe(1);
-    expect(result.executionSnapshot?.executionSessionId).toBeTruthy();
-    expect(result.toolMessage.content).toContain('Execution Snapshot');
-    expect(result.toolMessage.additional_kwargs?.executionSessionId).toBe(result.executionSnapshot?.executionSessionId);
+    expect(result.executionResult).toEqual(payload);
+    expect(result.toolMessage.additional_kwargs).toEqual(payload);
+    expect(payload.protocol).toBe('catalog_execution_v2');
+    expect(payload.phase).toBe('new_execution_plan');
+    expect(payload.plan_event).toBe('created');
+    expect(payload.revision).toBe(1);
+    expect(payload.executionSessionId).toBeTruthy();
+    expect(payload.plan.status).toBe('active');
+    expect(payload.plan.tasks.map((task) => task.status)).toEqual(['completed', 'pending']);
+    expect(payload.completed_task).toEqual({
+      taskId: 'task-1',
+      owner: 'product-worker',
+      status: 'completed',
+    });
+    expect(payload.worker_result_raw).toEqual({
+      status: 'completed',
+      data: ['product_id=101', 'sku=IP-17'],
+      missingData: [],
+      note: 'lookup done',
+      artifacts: [{ product_id: 101, sku: 'IP-17', payload: { nested: ['a', 'b'] } }],
+      summary: 'Товар найден и подтвержден.',
+    });
+    expect(payload.worker_result_raw && 'facts' in payload.worker_result_raw).toBe(false);
+    expect(payload.next_action).toEqual({
+      tool: 'approve_step',
+      reason_code: 'ready_for_next_pending_step',
+      instruction: 'Call approve_step next.',
+    });
     expect(workerInvocations).toHaveLength(1);
     expect(workerInvocations[0]?.payload).toEqual({
       messages: [],
@@ -192,7 +225,7 @@ describe('executeCatalogToolCall', () => {
           objective: 'Найти товар по SKU',
           facts: ['sku=IP-17'],
           constraints: ['read-only'],
-          expectedOutput: 'status, facts, missingInputs, summary',
+          expectedOutput: 'status, data, missingData, summary',
           contextNotes: 'Сначала нужен lookup',
         },
       },
@@ -200,15 +233,15 @@ describe('executeCatalogToolCall', () => {
 
     const activePlan = planningRuntime.getActivePlan('run-1');
     expect(activePlan?.tasks.map((task) => task.status)).toEqual(['completed', 'pending']);
-    expect(activePlan?.nextStepArtifacts).toEqual([{ product_id: 101, sku: 'IP-17' }]);
+    expect(activePlan?.nextStepArtifacts).toEqual([{ product_id: 101, sku: 'IP-17', payload: { nested: ['a', 'b'] } }]);
   });
 
-  test('approve_step keeps the same executionSessionId and increments revision from activeExecutionSnapshot', async () => {
+  test('approve_step keeps the same executionSessionId and increments revision from activeExecutionResult', async () => {
     workerResults.set('product-worker', {
       finalResult: {
         status: 'completed',
-        facts: ['product_id=101'],
-        missingInputs: [],
+        data: ['product_id=101'],
+        missingData: [],
         artifacts: [{ product_id: 101 }],
         summary: 'Родитель найден.',
       },
@@ -224,7 +257,7 @@ describe('executeCatalogToolCall', () => {
             facts: ['sku=IP-17'],
             constraints: [],
           },
-          responseStructure: 'status, facts',
+          responseStructure: 'status, data',
         },
         {
           taskId: 'task-2',
@@ -235,7 +268,7 @@ describe('executeCatalogToolCall', () => {
             constraints: ['read-only'],
             contextNotes: 'Нужна точная карточка вариаций',
           },
-          responseStructure: 'status, facts, missingInputs',
+          responseStructure: 'status, data, missingData',
         },
         {
           taskId: 'task-3',
@@ -245,7 +278,7 @@ describe('executeCatalogToolCall', () => {
             facts: ['product_id=101'],
             constraints: ['read-only'],
           },
-          responseStructure: 'status, facts, missingInputs',
+          responseStructure: 'status, data, missingData',
         },
       ]),
       []
@@ -254,8 +287,8 @@ describe('executeCatalogToolCall', () => {
     workerResults.set('variation-worker', {
       finalResult: {
         status: 'completed',
-        facts: ['variation_id=201'],
-        missingInputs: [],
+        data: ['variation_id=201'],
+        missingData: [],
         summary: 'Вариации проверены.',
       },
     });
@@ -271,10 +304,14 @@ describe('executeCatalogToolCall', () => {
       []
     );
 
+    const payload = parseExecutionToolPayload(result.toolMessage.content);
+
     expect(result.run?.status).toBe('completed');
-    expect(result.executionSnapshot?.revision).toBe(2);
-    expect(result.executionSnapshot?.executionSessionId).toBe(first.executionSnapshot?.executionSessionId ?? '');
-    expect(result.executionSnapshot?.nextAction).toBe('approve_step');
+    expect(payload.phase).toBe('approve_step');
+    expect(payload.plan_event).toBe('advanced');
+    expect(payload.revision).toBe(2);
+    expect(payload.executionSessionId).toBe(first.executionResult?.executionSessionId ?? '');
+    expect(payload.next_action.tool).toBe('approve_step');
     expect(workerInvocations).toHaveLength(1);
     expect(workerInvocations[0]?.workerId).toBe('variation-worker');
     expect(workerInvocations[0]?.payload).toEqual({
@@ -289,7 +326,7 @@ describe('executeCatalogToolCall', () => {
           objective: 'Проверить вариации',
           facts: ['product_id=101'],
           constraints: ['read-only'],
-          expectedOutput: 'status, facts, missingInputs',
+          expectedOutput: 'status, data, missingData',
           contextNotes: 'Нужна точная карточка вариаций',
         },
         upstreamArtifacts: [{ product_id: 101 }],
@@ -301,12 +338,12 @@ describe('executeCatalogToolCall', () => {
     expect(activePlan?.nextStepArtifacts).toBeUndefined();
   });
 
-  test('new_execution_plan replaces plan context and starts a new execution session', async () => {
+  test('new_execution_plan replaces the plan and returns plan_event=replaced with a new execution session', async () => {
     workerResults.set('product-worker', {
       finalResult: {
         status: 'completed',
-        facts: ['product_id=101'],
-        missingInputs: [],
+        data: ['product_id=101'],
+        missingData: [],
         artifacts: [{ product_id: 101 }],
         summary: 'Родитель найден.',
       },
@@ -322,7 +359,7 @@ describe('executeCatalogToolCall', () => {
             facts: ['sku=IP-17'],
             constraints: [],
           },
-          responseStructure: 'status, facts',
+          responseStructure: 'status, data',
         },
         {
           taskId: 'task-2',
@@ -332,7 +369,7 @@ describe('executeCatalogToolCall', () => {
             facts: ['product_id=101'],
             constraints: ['read-only'],
           },
-          responseStructure: 'status, facts, missingInputs',
+          responseStructure: 'status, data, missingData',
         },
       ]),
       []
@@ -343,8 +380,8 @@ describe('executeCatalogToolCall', () => {
     workerResults.set('variation-worker', {
       finalResult: {
         status: 'completed',
-        facts: ['variation_id=201'],
-        missingInputs: [],
+        data: ['variation_id=201'],
+        missingData: [],
         summary: 'Вариация найдена.',
       },
     });
@@ -368,7 +405,7 @@ describe('executeCatalogToolCall', () => {
                 facts: ['product_id=101'],
                 constraints: ['read-only'],
               },
-              responseStructure: 'status, facts, missingInputs',
+              responseStructure: 'status, data, missingData',
             },
           ],
         },
@@ -376,10 +413,13 @@ describe('executeCatalogToolCall', () => {
       []
     );
 
+    const payload = parseExecutionToolPayload(result.toolMessage.content);
+
     expect(result.run?.status).toBe('completed');
-    expect(result.executionSnapshot?.revision).toBe(1);
-    expect(result.executionSnapshot?.executionSessionId).toBeTruthy();
-    expect(result.executionSnapshot?.executionSessionId).not.toBe(first.executionSnapshot?.executionSessionId ?? '');
+    expect(payload.plan_event).toBe('replaced');
+    expect(payload.revision).toBe(1);
+    expect(payload.executionSessionId).toBeTruthy();
+    expect(payload.executionSessionId).not.toBe(first.executionResult?.executionSessionId ?? '');
     expect(workerInvocations.at(-1)?.payload).toEqual({
       messages: [],
       handoff: {
@@ -392,7 +432,7 @@ describe('executeCatalogToolCall', () => {
           objective: 'Проверить вариации заново',
           facts: ['product_id=101'],
           constraints: ['read-only'],
-          expectedOutput: 'status, facts, missingInputs',
+          expectedOutput: 'status, data, missingData',
           contextNotes: undefined,
         },
       },
@@ -400,7 +440,127 @@ describe('executeCatalogToolCall', () => {
     expect(planningRuntime.getActivePlan('run-1')?.nextStepArtifacts).toBeUndefined();
   });
 
-  test('finish_execution_plan clears active execution snapshot state', async () => {
+  test('blocker result routes planner to new_execution_plan through next_action.tool', async () => {
+    workerResults.set('product-worker', {
+      finalResult: {
+        status: 'failed',
+        data: [],
+        missingData: ['approved_category_id'],
+        blocker: {
+          kind: 'wrong_owner',
+          owner: 'category-worker',
+          reason: 'Сначала нужен category-worker.',
+        },
+        summary: 'Нужен другой owner.',
+      },
+    });
+
+    const result = await executeToolCall(
+      buildNewExecutionPlanCall([
+        {
+          taskId: 'task-1',
+          responsible: 'product-worker',
+          task: 'Подготовить карточку товара',
+          inputData: {
+            facts: ['sku=IP-17'],
+            constraints: [],
+          },
+          responseStructure: 'status, data, missingData, blocker',
+        },
+        {
+          taskId: 'task-2',
+          responsible: 'variation-worker',
+          task: 'Проверить вариации',
+          inputData: {
+            facts: ['product_id=101'],
+            constraints: ['read-only'],
+          },
+          responseStructure: 'status, data',
+        },
+      ]),
+      []
+    );
+
+    const payload = parseExecutionToolPayload(result.toolMessage.content);
+
+    expect(payload.plan.status).toBe('failed');
+    expect(payload.next_action).toEqual({
+      tool: 'new_execution_plan',
+      reason_code: 'worker_blocker_requires_plan_rebuild',
+      instruction: 'Do not call approve_step. Replace the plan before the next worker handoff.',
+    });
+  });
+
+  test('failed result without pending steps routes planner to finish_execution_plan', async () => {
+    workerResults.set('product-worker', {
+      finalResult: {
+        status: 'failed',
+        data: [],
+        missingData: ['sku'],
+        summary: 'Недостаточно данных.',
+      },
+    });
+
+    const result = await executeToolCall(
+      buildNewExecutionPlanCall([
+        {
+          taskId: 'task-1',
+          responsible: 'product-worker',
+          task: 'Найти товар',
+          inputData: {
+            facts: [],
+            constraints: [],
+          },
+          responseStructure: 'status, data, missingData',
+        },
+      ]),
+      []
+    );
+
+    const payload = parseExecutionToolPayload(result.toolMessage.content);
+
+    expect(payload.plan.status).toBe('failed');
+    expect(payload.next_action.tool).toBe('finish_execution_plan');
+    expect(payload.next_action.reason_code).toBe('plan_has_no_pending_steps');
+  });
+
+  test('missing report_worker_result returns a deterministic protocol error without inventing a summary', async () => {
+    workerResults.set('product-worker', {
+      toolRuns: [],
+    });
+
+    const result = await executeToolCall(
+      buildNewExecutionPlanCall([
+        {
+          taskId: 'task-1',
+          responsible: 'product-worker',
+          task: 'Найти товар без финального отчёта',
+          inputData: {
+            facts: ['sku=MISS-1'],
+            constraints: [],
+          },
+          responseStructure: 'status, data',
+        },
+      ]),
+      []
+    );
+
+    const payload = parseExecutionToolPayload(result.toolMessage.content);
+
+    expect(result.run?.status).toBe('failed');
+    expect(result.run?.errorSummary).toContain('report_worker_result');
+    expect(payload.plan.status).toBe('failed');
+    expect(payload.worker_result_raw).toBeNull();
+    expect(payload.protocol_error).toEqual({
+      code: 'missing_report_worker_result',
+      message:
+        'Протокол воркера нарушен: "product-worker" завершил работу без финального report_worker_result. Используй этот текст только как промежуточный сигнал и при необходимости перепоручи следующий шаг явно.',
+    });
+    expect(payload.next_action.tool).toBe('finish_execution_plan');
+    expect(planningRuntime.getActivePlan('run-1')?.tasks[0]?.status).toBe('failed');
+  });
+
+  test('finish_execution_plan clears active execution result state', async () => {
     await planningRuntime.createPlan({
       runId: 'run-1',
       chatId: 101,
@@ -419,24 +579,32 @@ describe('executeCatalogToolCall', () => {
       ],
     });
     executionContext = {
-      activeExecutionSnapshot: {
+      activeExecutionResult: {
+        protocol: 'catalog_execution_v2',
+        phase: 'new_execution_plan',
         executionSessionId: 'exec-1',
         revision: 1,
-        lastTool: 'new_execution_plan',
-        planStatus: 'active',
-        steps: [{ taskId: 'task-1', title: 'Готовый шаг', owner: 'product-worker', status: 'completed' }],
-        lastCompletedStep: {
-          taskId: 'task-1',
-          worker: 'product-worker',
+        plan_event: 'created',
+        plan: {
           status: 'completed',
-          summary: 'ok',
-          blocker: null,
-          missingInputsCount: 0,
-          artifactsCount: 0,
+          tasks: [{ taskId: 'task-1', title: 'Готовый шаг', owner: 'product-worker', status: 'completed' }],
         },
-        nextAction: 'finish_execution_plan',
-        nextActionReason: 'plan_has_no_pending_steps',
-        upstreamArtifactsCount: 0,
+        completed_task: {
+          taskId: 'task-1',
+          owner: 'product-worker',
+          status: 'completed',
+        },
+        worker_result_raw: {
+          status: 'completed',
+          data: ['ok'],
+          missingData: [],
+          note: null,
+        },
+        next_action: {
+          tool: 'finish_execution_plan',
+          reason_code: 'plan_has_no_pending_steps',
+          instruction: 'Call finish_execution_plan unless you intentionally replace the plan.',
+        },
       },
     };
 
@@ -456,39 +624,10 @@ describe('executeCatalogToolCall', () => {
       summary: 'Пользовательский ответ готов.',
       finalizeOutcome: 'completed',
     });
-    expect(result.clearExecutionSnapshot).toBe(true);
-    expect(executionContext).toEqual({ activeExecutionSnapshot: null });
+    expect(result.clearExecutionResult).toBe(true);
+    expect(executionContext).toEqual({ activeExecutionResult: null });
     expect(planningRuntime.getActivePlan('run-1')).toBeNull();
     expect(planningRuntime.getPlan('run-1')?.status).toBe('completed');
-  });
-
-  test('failed worker snapshot routes planner to new_execution_plan or finish_execution_plan deterministically', async () => {
-    workerResults.set('product-worker', {
-      toolRuns: [],
-    });
-
-    const result = await executeToolCall(
-      buildNewExecutionPlanCall([
-        {
-          taskId: 'task-1',
-          responsible: 'product-worker',
-          task: 'Найти товар без финального отчёта',
-          inputData: {
-            facts: ['sku=MISS-1'],
-            constraints: [],
-          },
-          responseStructure: 'status, facts',
-        },
-      ]),
-      []
-    );
-
-    expect(result.run?.status).toBe('failed');
-    expect(result.executionSnapshot?.planStatus).toBe('failed');
-    expect(result.executionSnapshot?.nextAction).toBe('finish_execution_plan');
-    expect(result.toolMessage.content).toContain('Execution Snapshot');
-    expect(result.run?.errorSummary).toContain('report_worker_result');
-    expect(planningRuntime.getActivePlan('run-1')?.tasks[0]?.status).toBe('failed');
   });
 
   test('returns a protocol-safe ToolMessage for an unknown tool name', async () => {
@@ -507,7 +646,7 @@ describe('executeCatalogToolCall', () => {
     expect(result.toolMessage.content).toBe('Каталожный инструмент "unknown_catalog_tool" не зарегистрирован.');
   });
 
-  test('dispatchToolsNode fatally fails when active plan exists without activeExecutionSnapshot', async () => {
+  test('dispatchToolsNode fatally fails when active plan exists without activeExecutionResult', async () => {
     await planningRuntime.createPlan({
       runId: 'run-1',
       chatId: 101,
@@ -532,16 +671,17 @@ describe('executeCatalogToolCall', () => {
             objective: 'Проверить вариации',
             facts: ['product_id=101'],
             constraints: ['read-only'],
-            expectedOutput: 'status, facts',
+            expectedOutput: 'status, data',
           },
         },
       ],
     });
 
+    const dispatchToolsNode = createDispatchToolsNode(getPlanningDeps());
     const result = await dispatchToolsNode({
       messages: [],
       workerRuns: [],
-      activeExecutionSnapshot: null,
+      activeExecutionResult: null,
       plannerIteration: 1,
       pendingToolCalls: [{ id: 'tool-call-2', name: approveStepTool.name, args: {} }],
       nextRoute: 'dispatchTools',
@@ -550,9 +690,9 @@ describe('executeCatalogToolCall', () => {
     });
 
     expect(result.messages).toEqual([]);
-    expect(result.activeExecutionSnapshot).toBeNull();
+    expect(result.activeExecutionResult).toBeNull();
     expect(result.fatalErrorMessage).toBe(
-      'Нарушение протокола: active execution plan и activeExecutionSnapshot должны существовать вместе.'
+      'Нарушение протокола: active execution plan и activeExecutionResult должны существовать вместе.'
     );
     expect(result.nextRoute).toBe('finalize');
     expect(workerInvocations).toHaveLength(0);

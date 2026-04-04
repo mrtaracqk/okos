@@ -1,5 +1,5 @@
 import { ToolMessage } from '@langchain/core/messages';
-import { type ExecutionSnapshot } from '../executionSnapshot';
+import { type CatalogExecutionResult } from '../executionResult';
 import { type WorkerRun } from '../../contracts/workerRun';
 
 export type CatalogToolCall = {
@@ -14,13 +14,13 @@ export type CatalogToolCompletion = {
 };
 
 export type CatalogToolExecutionContext = {
-  activeExecutionSnapshot: ExecutionSnapshot | null;
+  activeExecutionResult: CatalogExecutionResult | null;
 };
 
 export type CatalogToolExecutionResult = {
   run?: WorkerRun;
   toolMessage: ToolMessage;
   completion?: CatalogToolCompletion;
-  executionSnapshot?: ExecutionSnapshot;
-  clearExecutionSnapshot?: boolean;
+  executionResult?: CatalogExecutionResult;
+  clearExecutionResult?: boolean;
 };

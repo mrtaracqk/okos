@@ -8,8 +8,8 @@ import { type WorkerRun } from '../../contracts/workerRun';
 import { type CatalogToolCall } from './types';
 
 export const PLANNING_RUNTIME_UNAVAILABLE_MESSAGE = 'Runtime планирования недоступен для этого запуска.';
-export const ACTIVE_PLAN_SNAPSHOT_PROTOCOL_ERROR =
-  'Нарушение протокола: active execution plan и activeExecutionSnapshot должны существовать вместе.';
+export const ACTIVE_PLAN_EXECUTION_RESULT_PROTOCOL_ERROR =
+  'Нарушение протокола: active execution plan и activeExecutionResult должны существовать вместе.';
 
 function replyToolCallId(toolCall: Pick<CatalogToolCall, 'id' | 'name'>): string {
   if (typeof toolCall.id === 'string' && toolCall.id.length > 0) return toolCall.id;
@@ -60,10 +60,15 @@ export function buildExecutionToolResultAttributes(result: { toolMessage: ToolMe
     typeof result.toolMessage.additional_kwargs?.revision === 'number'
       ? result.toolMessage.additional_kwargs.revision
       : undefined;
+  const protocol =
+    typeof result.toolMessage.additional_kwargs?.protocol === 'string'
+      ? result.toolMessage.additional_kwargs.protocol
+      : undefined;
   return buildTraceAttributes({
     'output.value': formatTraceText(toolText, 1000),
+    'catalog.execution_protocol': protocol,
     'catalog.execution_session_id': executionSessionId,
-    'catalog.execution_snapshot_revision': revision,
+    'catalog.execution_result_revision': revision,
     ...(result.run
       ? {
           'catalog.worker_status': result.run.status,
@@ -79,7 +84,7 @@ export function buildExecutionToolStatusMessage(toolName: string, toolMessageTex
     toolMessageText.startsWith(`Сбой ${toolName}:`) ||
     toolMessageText.includes(`Ошибка ${toolName}.`) ||
     toolMessageText.includes(PLANNING_RUNTIME_UNAVAILABLE_MESSAGE) ||
-    toolMessageText.includes(ACTIVE_PLAN_SNAPSHOT_PROTOCOL_ERROR)
+    toolMessageText.includes(ACTIVE_PLAN_EXECUTION_RESULT_PROTOCOL_ERROR)
   ) {
     return toolMessageText;
   }

@@ -27,21 +27,85 @@ type WorkerTool = {
   invoke: (input: Record<string, unknown>) => Promise<unknown>;
 };
 
+type ParsedToolCallArgs =
+  | {
+      ok: true;
+      args: Record<string, unknown>;
+    }
+  | {
+      ok: false;
+      args: Record<string, unknown>;
+      error: {
+        message: string;
+        code: 'invalid_tool_args';
+        type: 'invalid_tool_args';
+        rawArgs: unknown;
+      };
+    };
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseToolCallArgs(value: unknown): Record<string, unknown> {
-  if (isRecord(value)) return value;
+function describeToolCallArgsShape(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function parseToolCallArgs(value: unknown): ParsedToolCallArgs {
+  if (isRecord(value)) {
+    return {
+      ok: true,
+      args: value,
+    };
+  }
+
   if (typeof value === 'string') {
     try {
       const parsed = JSON.parse(value) as unknown;
-      return isRecord(parsed) ? parsed : {};
-    } catch {
-      return {};
+      if (isRecord(parsed)) {
+        return {
+          ok: true,
+          args: parsed,
+        };
+      }
+
+      return {
+        ok: false,
+        args: {},
+        error: {
+          message: `tool_call.args must decode to a JSON object, got ${describeToolCallArgsShape(parsed)}.`,
+          code: 'invalid_tool_args',
+          type: 'invalid_tool_args',
+          rawArgs: value,
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to parse tool_call.args JSON.';
+      return {
+        ok: false,
+        args: {},
+        error: {
+          message: `tool_call.args is not valid JSON: ${message}`,
+          code: 'invalid_tool_args',
+          type: 'invalid_tool_args',
+          rawArgs: value,
+        },
+      };
     }
   }
-  return {};
+
+  return {
+    ok: false,
+    args: {},
+    error: {
+      message: `tool_call.args must be an object or a JSON string, got ${describeToolCallArgsShape(value)}.`,
+      code: 'invalid_tool_args',
+      type: 'invalid_tool_args',
+      rawArgs: value,
+    },
+  };
 }
 
 function safeSerialize(value: unknown): string | null {
@@ -154,13 +218,21 @@ function normalizeToolRun(toolName: string, args: Record<string, unknown>, paylo
   };
 }
 
-function buildFailedToolPayload(toolName: string, message: string, source: string, type: string) {
+function buildFailedToolPayload(
+  _toolName: string,
+  message: string,
+  source: string,
+  type: string,
+  code?: string,
+  structured: Record<string, unknown> | null = null
+) {
   return {
     ok: false,
-    structured: null,
+    structured,
     error: {
       source,
       type,
+      ...(code ? { code } : {}),
       message,
       retryable: false,
     },
@@ -252,14 +324,59 @@ export function createWorkerLoopGraph<Handoff = unknown, FinalResult = unknown>(
     const shouldExitAfterTools = lastMessage.tool_calls.some((toolCall) => finalToolNameSet.has(toolCall.name));
     let finalResultUpdate: FinalResult | null = null;
     for (const toolCall of lastMessage.tool_calls) {
-      const tool = toolsByName.get(toolCall.name);
       const toolCallId =
         typeof toolCall.id === 'string' && toolCall.id.length > 0
           ? toolCall.id
           : typeof toolCall.name === 'string'
             ? toolCall.name
             : '';
-      const args = parseToolCallArgs(toolCall.args);
+      const parsedArgs = parseToolCallArgs(toolCall.args);
+      const args = parsedArgs.args;
+
+      if (!parsedArgs.ok) {
+        const toolName = typeof toolCall.name === 'string' ? toolCall.name : 'unknown_tool';
+        const payload = await runToolSpan(
+          'worker.tool_call',
+          async () =>
+            buildFailedToolPayload(
+              toolName,
+              parsedArgs.error.message,
+              'catalog-worker',
+              parsedArgs.error.type,
+              parsedArgs.error.code,
+              {
+                rawArgs: parsedArgs.error.rawArgs,
+              }
+            ),
+          {
+            attributes: {
+              ...buildTraceAttributes({
+                'tool.name': toolName,
+                'tool.call_id': toolCallId,
+                'tool.args': formatTraceValue(parsedArgs.error.rawArgs, 1000),
+                'tool.status': 'failed',
+                'error.type': parsedArgs.error.type,
+                'error.code': parsedArgs.error.code,
+                'error.retryable': false,
+              }),
+              ...buildTraceInputAttributes(parsedArgs.error.rawArgs, 1000),
+            },
+            statusMessage: () => parsedArgs.error.message,
+          }
+        );
+        const normalizedRun = normalizeToolRun(toolName, args, payload);
+        toolRuns.push(normalizedRun);
+        messages.push(
+          new ToolMessage({
+            tool_call_id: toolCallId,
+            name: toolCall.name,
+            content: serializeToolMessagePayload(payload),
+          })
+        );
+        continue;
+      }
+
+      const tool = toolsByName.get(toolCall.name);
 
       if (!tool) {
         const payload = await runToolSpan(

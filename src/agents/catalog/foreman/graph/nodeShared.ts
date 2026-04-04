@@ -1,6 +1,6 @@
 import { type RuntimePlan } from '../../../../runtime/planning/types';
-import { type ExecutionSnapshot } from '../executionSnapshot';
-import { ACTIVE_PLAN_SNAPSHOT_PROTOCOL_ERROR } from '../tools/protocol';
+import { type CatalogExecutionResult } from '../executionResult';
+import { ACTIVE_PLAN_EXECUTION_RESULT_PROTOCOL_ERROR } from '../tools/protocol';
 import { type CatalogForemanRoute, type CatalogGraphState } from './state';
 
 function toErrorMessage(error: unknown) {
@@ -19,11 +19,11 @@ export function buildFailureState(error: unknown): Pick<
   };
 }
 
-export function assertExecutionSnapshotInvariant(
+export function assertExecutionResultInvariant(
   activePlan: RuntimePlan | null,
-  activeExecutionSnapshot: ExecutionSnapshot | null
+  activeExecutionResult: CatalogExecutionResult | null
 ) {
-  if (Boolean(activePlan) !== Boolean(activeExecutionSnapshot)) {
-    throw new Error(ACTIVE_PLAN_SNAPSHOT_PROTOCOL_ERROR);
+  if (Boolean(activePlan) !== Boolean(activeExecutionResult)) {
+    throw new Error(ACTIVE_PLAN_EXECUTION_RESULT_PROTOCOL_ERROR);
   }
 }

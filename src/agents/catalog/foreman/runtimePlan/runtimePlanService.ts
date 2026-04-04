@@ -1,5 +1,5 @@
 import { ToolMessage } from '@langchain/core/messages';
-import { getPlanningRunContext, getPlanningRuntime, type RuntimePlan } from '../../../../runtime/planning';
+import { type RuntimePlan } from '../../../../runtime/planning';
 import { resolveCatalogWorkerId } from '../../contracts/catalogWorkerId';
 import { type WorkerRun } from '../../contracts/workerRun';
 import { toolReply } from '../tools/protocol';
@@ -7,6 +7,7 @@ import { type CatalogToolCall } from '../tools/types';
 import { executeWorkerHandoff } from '../workers/handoff';
 import { resolveCatalogForemanWorker } from '../workers/registry';
 import { getInProgressExecutableTask } from './selectors';
+import { type CatalogPlanningDeps } from './planningDeps';
 
 export type PlannerExecutionToolPhase = 'new_execution_plan' | 'approve_step';
 
@@ -29,15 +30,17 @@ function getInProgressExecutionFailureMessages(phase: PlannerExecutionToolPhase)
   };
 }
 
-export function getCatalogAgentRuntimeRunId() {
-  return getPlanningRunContext()?.runId ?? null;
+export function getCatalogAgentRuntimeRunId(planningDeps: Pick<CatalogPlanningDeps, 'resolveRunContext'>) {
+  return planningDeps.resolveRunContext()?.runId ?? null;
 }
 
 export async function finalizeCatalogExecutionPlan(input: {
+  planningDeps: Pick<CatalogPlanningDeps, 'planningRuntime'>;
   runId: string;
   outcome: 'failed' | 'abandoned';
 }) {
-  const planningRuntime = getPlanningRuntime();
+  const { planningDeps } = input;
+  const planningRuntime = planningDeps.planningRuntime;
   const activePlan = planningRuntime.getActivePlan(input.runId);
   if (!activePlan) {
     return;
@@ -56,6 +59,7 @@ export async function finalizeCatalogExecutionPlan(input: {
  * Общий путь для new_execution_plan (после create/update) и approve_step (после перевода следующей pending → in_progress).
  */
 export async function runInProgressPlanTaskAndSyncRuntime(params: {
+  planningDeps: Pick<CatalogPlanningDeps, 'planningRuntime'>;
   runId: string;
   workerRuns: WorkerRun[];
   replyToToolCall: Pick<CatalogToolCall, 'id' | 'name'>;
@@ -64,9 +68,9 @@ export async function runInProgressPlanTaskAndSyncRuntime(params: {
   | { ok: true; run: WorkerRun; planAfterWorker: RuntimePlan; completedTaskId: string }
   | { ok: false; toolMessage: ToolMessage; run?: WorkerRun }
 > {
-  const { runId, workerRuns, replyToToolCall, phase } = params;
+  const { planningDeps, runId, workerRuns, replyToToolCall, phase } = params;
   const msgs = getInProgressExecutionFailureMessages(phase);
-  const planningRuntime = getPlanningRuntime();
+  const planningRuntime = planningDeps.planningRuntime;
 
   const activePlan = planningRuntime.getActivePlan(runId);
   const activeTask = getInProgressExecutableTask(activePlan);

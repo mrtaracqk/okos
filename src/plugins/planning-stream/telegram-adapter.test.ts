@@ -35,4 +35,29 @@ describe('renderRuntimePlan', () => {
     expect(renderRuntimePlan(plan)).toContain('❌ Подготовить атрибуты');
     expect(renderRuntimePlan(plan)).toContain('Ответственный: attribute-worker');
   });
+
+  it('shows immediate execution hint when a task is already in progress', () => {
+    const plan: RuntimePlan = {
+      runId: 'run-2',
+      chatId: 101,
+      status: 'active',
+      planContext: {
+        goal: 'Проверить товар',
+        facts: [],
+        constraints: [],
+      },
+      tasks: [
+        {
+          taskId: 'product',
+          title: 'Найти товар',
+          owner: 'product-worker',
+          status: 'in_progress',
+        },
+      ],
+    };
+
+    expect(renderRuntimePlan(plan)).toContain('Статус: в работе');
+    expect(renderRuntimePlan(plan)).toContain('Сейчас выполняется шаг, отмеченный 🔄.');
+    expect(renderRuntimePlan(plan)).toContain('🔄 Найти товар');
+  });
 });

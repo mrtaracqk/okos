@@ -1,5 +1,6 @@
 import { type RuntimePlan } from '../../../../runtime/planning/types';
 import { type WorkerRun } from '../../contracts/workerRun';
+import { type CatalogPlanningDeps } from '../runtimePlan/planningDeps';
 import { getNextApprovableTask } from '../runtimePlan/selectors';
 import {
   approveStepTool,
@@ -21,6 +22,7 @@ type CatalogForemanToolRegistration = {
   sequenced: boolean;
   isAvailable(activePlan: RuntimePlan | null): boolean;
   execute(
+    planningDeps: CatalogPlanningDeps,
     toolCall: CatalogToolCall,
     workerRuns: WorkerRun[],
     executionContext: CatalogToolExecutionContext
@@ -33,7 +35,7 @@ export const catalogForemanToolRegistry = [
     tool: inspectCatalogPlaybookTool,
     sequenced: false,
     isAvailable: () => true,
-    execute: async (toolCall) => {
+    execute: async (_planningDeps, toolCall) => {
       const { handleInspectPlaybookToolCall } = await import('./handlers/inspectPlaybook.js');
       return handleInspectPlaybookToolCall(toolCall);
     },
@@ -43,9 +45,9 @@ export const catalogForemanToolRegistry = [
     tool: newExecutionPlanTool,
     sequenced: true,
     isAvailable: () => true,
-    execute: async (toolCall, workerRuns, executionContext) => {
+    execute: async (planningDeps, toolCall, workerRuns, executionContext) => {
       const { handleNewExecutionPlanToolCall } = await import('./handlers/newExecutionPlan.js');
-      return handleNewExecutionPlanToolCall(toolCall, workerRuns, executionContext);
+      return handleNewExecutionPlanToolCall(planningDeps, toolCall, workerRuns, executionContext);
     },
   },
   {
@@ -53,9 +55,9 @@ export const catalogForemanToolRegistry = [
     tool: approveStepTool,
     sequenced: true,
     isAvailable: (activePlan) => getNextApprovableTask(activePlan) != null,
-    execute: async (toolCall, workerRuns, executionContext) => {
+    execute: async (planningDeps, toolCall, workerRuns, executionContext) => {
       const { handleApproveStepToolCall } = await import('./handlers/approveStep.js');
-      return handleApproveStepToolCall(toolCall, workerRuns, executionContext);
+      return handleApproveStepToolCall(planningDeps, toolCall, workerRuns, executionContext);
     },
   },
   {
@@ -63,9 +65,9 @@ export const catalogForemanToolRegistry = [
     tool: finishExecutionPlanTool,
     sequenced: true,
     isAvailable: (activePlan) => activePlan != null,
-    execute: async (toolCall) => {
+    execute: async (planningDeps, toolCall) => {
       const { handleFinishExecutionPlanToolCall } = await import('./handlers/finishExecutionPlan.js');
-      return handleFinishExecutionPlanToolCall(toolCall);
+      return handleFinishExecutionPlanToolCall(planningDeps, toolCall);
     },
   },
 ] as const satisfies ReadonlyArray<CatalogForemanToolRegistration>;

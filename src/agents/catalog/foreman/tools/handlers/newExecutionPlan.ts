@@ -3,12 +3,9 @@ import {
   formatTraceValue,
   runToolSpan,
 } from '../../../../../observability/traceContext';
-import {
-  getPlanningRuntime,
-  getPlanningRunContext,
-} from '../../../../../runtime/planning';
 import { type WorkerRun } from '../../../contracts/workerRun';
-import { createExecutionSessionId } from '../../executionSnapshot';
+import { createExecutionSessionId } from '../../executionResult';
+import { type CatalogPlanningDeps } from '../../runtimePlan/planningDeps';
 import { tasksToRuntimePlanTasks } from '../../runtimePlan/runtimePlanMapper';
 import { getCatalogAgentRuntimeRunId } from '../../runtimePlan/runtimePlanService';
 import { newExecutionPlanInputSchema } from '../definitions/executionPlanTools';
@@ -23,6 +20,7 @@ import { type CatalogToolCall, type CatalogToolExecutionContext, type CatalogToo
 import { executePreparedPlanTask } from './executionShared';
 
 export async function handleNewExecutionPlanToolCall(
+  planningDeps: CatalogPlanningDeps,
   toolCall: CatalogToolCall,
   workerRuns: WorkerRun[],
   _executionContext: CatalogToolExecutionContext
@@ -41,9 +39,9 @@ export async function handleNewExecutionPlanToolCall(
         };
       }
 
-      const runContext = getPlanningRunContext();
-      const planningRuntime = getPlanningRuntime();
-      const runId = getCatalogAgentRuntimeRunId();
+      const runContext = planningDeps.resolveRunContext();
+      const planningRuntime = planningDeps.planningRuntime;
+      const runId = getCatalogAgentRuntimeRunId(planningDeps);
 
       if (!runContext || !runId) {
         return {
@@ -55,6 +53,7 @@ export async function handleNewExecutionPlanToolCall(
         const executionSessionId = createExecutionSessionId();
         const runtimeTasks = tasksToRuntimePlanTasks(parsedArgs.data.tasks);
         const existingPlan = planningRuntime.getActivePlan(runId);
+        const planEvent = existingPlan ? 'replaced' : 'created';
         if (existingPlan) {
           await planningRuntime.updatePlan({
             runId,
@@ -73,10 +72,12 @@ export async function handleNewExecutionPlanToolCall(
         }
 
         return executePreparedPlanTask({
+          planningDeps,
           runId,
           workerRuns,
           toolCall,
           phase: 'new_execution_plan',
+          planEvent,
           executionSessionId,
           revision: 1,
         });

@@ -1,7 +1,7 @@
 import { BaseMessage } from '@langchain/core/messages';
 import { Annotation } from '@langchain/langgraph';
 import { type WorkerRun } from '../../contracts/workerRun';
-import { type ExecutionSnapshot } from '../executionSnapshot';
+import { type CatalogExecutionResult } from '../executionResult';
 import { type CatalogToolCall } from '../tools/types';
 
 export type CatalogPlannerRoute = 'dispatchTools' | 'plannerLimitFallback' | 'finalize';
@@ -16,8 +16,8 @@ export const CatalogGraphStateAnnotation = Annotation.Root({
     reducer: (_, newWorkerRuns) => newWorkerRuns,
     default: () => [],
   }),
-  // Authoritative execution state for any active runtime plan. Active plan without this snapshot is a protocol error.
-  activeExecutionSnapshot: Annotation<ExecutionSnapshot | null>({
+  // Authoritative execution state for any active runtime plan. Active plan without this result is a protocol error.
+  activeExecutionResult: Annotation<CatalogExecutionResult | null>({
     reducer: (_, newValue) => newValue,
     default: () => null,
   }),

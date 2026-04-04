@@ -24,8 +24,8 @@ import TelegramService from './services/telegram';
 
 const redisService = new RedisService();
 
-async function deliverAssistantTelegramText(chatId: number, text: string): Promise<void> {
-  const placeholderMessageId = takeCatalogDelegationPlaceholderMessageId(chatId);
+async function deliverAssistantTelegramText(chatId: number, text: string, runId?: string): Promise<void> {
+  const placeholderMessageId = takeCatalogDelegationPlaceholderMessageId(runId);
   if (placeholderMessageId !== undefined) {
     try {
       await TelegramService.editChatMessageText(chatId, placeholderMessageId, text);
@@ -106,7 +106,7 @@ export async function handleMessage(chatId: number, text: string) {
                 if (result.catalogDelegation?.summary?.trim()) {
                   const responseText = result.catalogDelegation.summary.trim();
                   await redisService.saveAIMessage(chatId, responseText);
-                  await deliverAssistantTelegramText(chatId, responseText);
+                  await deliverAssistantTelegramText(chatId, responseText, runThreadId);
 
                   return {
                     delivered: true,
@@ -135,7 +135,7 @@ export async function handleMessage(chatId: number, text: string) {
                 }
 
                 await redisService.saveAIMessage(chatId, aiResponse);
-                await deliverAssistantTelegramText(chatId, aiResponse);
+                await deliverAssistantTelegramText(chatId, aiResponse, runThreadId);
 
                 return {
                   delivered: true,
@@ -158,7 +158,7 @@ export async function handleMessage(chatId: number, text: string) {
             );
 
             if (!finalResponse.delivered) {
-              await abandonCatalogDelegationPlaceholder(chatId);
+              await abandonCatalogDelegationPlaceholder(runThreadId);
             }
 
             return {
@@ -167,7 +167,7 @@ export async function handleMessage(chatId: number, text: string) {
             };
           }
 
-          await abandonCatalogDelegationPlaceholder(chatId);
+          await abandonCatalogDelegationPlaceholder(runThreadId);
 
           return {
             delivered: false,
@@ -195,7 +195,7 @@ export async function handleMessage(chatId: number, text: string) {
     );
   } catch (error: any) {
     console.error('Error processing message:', error);
-    await abandonCatalogDelegationPlaceholder(chatId);
+    await abandonCatalogDelegationPlaceholder(runThreadId);
     if (error.status === 429) {
       await TelegramService.sendMessage(chatId, 'Вы превысили лимит запросов. Попробуйте позже.');
       return;
@@ -203,7 +203,7 @@ export async function handleMessage(chatId: number, text: string) {
 
     await TelegramService.sendMessage(chatId, 'Не удалось обработать ваше сообщение.');
   } finally {
-    await telegramMainGraphProgressReporter.onRunComplete({ chatId });
+    await telegramMainGraphProgressReporter.onRunComplete({ chatId, runId: runThreadId });
   }
 }
 
