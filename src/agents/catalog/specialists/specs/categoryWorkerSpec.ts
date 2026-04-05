@@ -33,8 +33,8 @@ export const categoryWorkerSpec = {
   },
   foreman: {
     routingSummary: [
-      'Category-worker отвечает только за product categories и их parent-child иерархию.',
-      'Назначение категорий товару делает product-worker; если для этого не хватает самой категории или её родителя, сначала вызывается category-worker.',
+      'Дерево категорий (CRUD, parent-child); только tools категорий, без read в соседних доменах.',
+      'Привязка категорий к товару — product-worker; если не хватает узла или родителя в дереве — сначала этот шаг.',
     ],
     consultationSummary: [
       'Когда нужен category-worker, а когда задачу должен вести product-worker.',

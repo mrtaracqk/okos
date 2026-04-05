@@ -47,7 +47,7 @@ describe('catalogWorkerContracts', () => {
       'Если родительский товар или нужная taxonomy отсутствуют и для продолжения их надо создать либо подготовить, верни blocker на product-worker или attribute-worker.'
     );
     expect(CATALOG_FOREMAN_SPECIALIST_SUMMARIES['variation-worker'].routingSummary).toContain(
-      'Изменения родительского товара ведёт product-worker; если для variation не хватает родителя или глобальной taxonomy, сначала вызывается product-worker или attribute-worker.'
+      'Родитель или глобальная taxonomy — product-worker или attribute-worker, если их не хватает для variation-шага.',
     );
   });
 });

@@ -4,7 +4,7 @@ import { type CatalogPlanningDeps } from '../runtimePlan/planningDeps';
 import { getNextApprovableTask } from '../runtimePlan/selectors';
 import {
   approveStepTool,
-  finishExecutionPlanTool,
+  finishCatalogTurnTool,
   newExecutionPlanTool,
 } from './definitions/executionPlanTools';
 import { inspectCatalogPlaybookTool } from './definitions/inspectPlaybookTool';
@@ -14,7 +14,7 @@ type CatalogForemanAgentTool =
   | typeof inspectCatalogPlaybookTool
   | typeof newExecutionPlanTool
   | typeof approveStepTool
-  | typeof finishExecutionPlanTool;
+  | typeof finishCatalogTurnTool;
 
 type CatalogForemanToolRegistration = {
   name: string;
@@ -61,13 +61,13 @@ export const catalogForemanToolRegistry = [
     },
   },
   {
-    name: finishExecutionPlanTool.name,
-    tool: finishExecutionPlanTool,
+    name: finishCatalogTurnTool.name,
+    tool: finishCatalogTurnTool,
     sequenced: true,
-    isAvailable: (activePlan) => activePlan != null,
+    isAvailable: () => true,
     execute: async (planningDeps, toolCall) => {
-      const { handleFinishExecutionPlanToolCall } = await import('./handlers/finishExecutionPlan.js');
-      return handleFinishExecutionPlanToolCall(planningDeps, toolCall);
+      const { handleFinishCatalogTurnToolCall } = await import('./handlers/finishCatalogTurn.js');
+      return handleFinishCatalogTurnToolCall(planningDeps, toolCall);
     },
   },
 ] as const satisfies ReadonlyArray<CatalogForemanToolRegistration>;

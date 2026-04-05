@@ -31,8 +31,8 @@ export const approveStepInputSchema = z.object({
   reason: z.string().optional().describe('Короткая причина продолжения шага.'),
 });
 
-export const finishExecutionPlanInputSchema = z.object({
-  outcome: z.enum(['completed', 'failed']).describe('Финальный исход плана.'),
+export const finishCatalogTurnInputSchema = z.object({
+  outcome: z.enum(['completed', 'failed']).describe('Итог хода: успех или неуспех.'),
   summary: z.string().trim().min(1).describe('Итоговый ответ пользователю.'),
 });
 
@@ -62,17 +62,18 @@ export const approveStepTool = tool(
   }
 );
 
-export const finishExecutionPlanTool = tool(
+export const finishCatalogTurnTool = tool(
   async () => {
-    return { ok: true, note: 'finish_execution_plan is handled by catalog foreman dispatcher' };
+    return { ok: true, note: 'finish_catalog_turn is handled by catalog foreman dispatcher' };
   },
   {
-    name: 'finish_execution_plan',
-    description: 'Завершить active plan и вернуть подтверждение финализации.',
-    schema: finishExecutionPlanInputSchema,
+    name: 'finish_catalog_turn',
+    description:
+      'Зафиксировать итоговый ответ пользователю и закончить ход каталога. С активным планом закрывает его; без плана — только финальный ответ (консультация без воркеров).',
+    schema: finishCatalogTurnInputSchema,
   }
 );
 
 export type ExecutableTaskInput = z.infer<typeof executableTaskInputSchema>;
 export type ApproveStepInput = z.infer<typeof approveStepInputSchema>;
-export type FinishExecutionPlanInput = z.infer<typeof finishExecutionPlanInputSchema>;
+export type FinishCatalogTurnInput = z.infer<typeof finishCatalogTurnInputSchema>;

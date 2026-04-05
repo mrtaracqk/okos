@@ -1,6 +1,6 @@
 import { type BaseMessage } from '@langchain/core/messages';
 import { chatModel } from '../../../config';
-import { getCatalogWorkerPrompt } from '../../../prompts';
+import { getCatalogWorkerPrompt } from '../../../prompts/prompts';
 import { type CatalogWorkerId } from '../../../contracts/catalogExecutionOwners';
 import { createWorkerResultTool } from '../contracts/workerResult';
 import { extractCatalogFinalResult, renderWorkerHandoffMessage } from './graph/catalogWorkerProtocol';

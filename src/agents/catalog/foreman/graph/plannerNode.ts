@@ -9,11 +9,10 @@ import {
   runLlmSpan,
   summarizeToolCallNames,
 } from '../../../../observability/traceContext';
-import { PROMPTS } from '../../../../prompts';
+import { PROMPTS } from '../../../../prompts/prompts';
 import { type RuntimePlan } from '../../../../runtime/planning';
 import { getLastAIMessageText } from '../../../shared/messageUtils';
 import { renderPlaybookIndexForPrompt } from '../../playbooks';
-import { buildExecutionResultRuntimeContextMessage } from '../executionResult';
 import { applyActivePlanGuard } from '../planner/activePlanGuard';
 import { type CatalogPlanningDeps } from '../runtimePlan/planningDeps';
 import { getCatalogForemanAgentTools } from '../tools/availability';
@@ -50,10 +49,7 @@ export function createPlannerNode(planningDeps: CatalogPlanningDeps) {
 
           const systemMessage = buildCatalogSystemMessage();
           const runnableModel = buildCatalogRunnableModel(activePlan);
-          const runtimeContextMessages = activeExecutionResult
-            ? [buildExecutionResultRuntimeContextMessage(activeExecutionResult)]
-            : [];
-          const promptPrefixMessages: BaseMessage[] = [systemMessage, ...runtimeContextMessages];
+          const promptPrefixMessages: BaseMessage[] = [systemMessage];
           let { response, toolCalls }: { response: AIMessage; toolCalls: AIMessage['tool_calls'] } = await runChainSpan(
             'catalog_agent.planner_iteration',
             async () => {
@@ -203,11 +199,8 @@ export function createPlannerLimitFallbackNode(planningDeps: CatalogPlanningDeps
 
           const systemMessage = buildCatalogSystemMessage();
           const runnableModel = buildCatalogRunnableModel(activePlan);
-          const runtimeContextMessages = activeExecutionResult
-            ? [buildExecutionResultRuntimeContextMessage(activeExecutionResult)]
-            : [];
           const stopMessage = new SystemMessage(PLANNER_LIMIT_MESSAGE);
-          const llmMessages = [systemMessage, ...runtimeContextMessages, ...state.messages, stopMessage];
+          const llmMessages = [systemMessage, ...state.messages, stopMessage];
           const response = await runLlmSpan(
             'catalog_agent.planner_limit_fallback.llm',
             async () => runnableModel.invoke(llmMessages),

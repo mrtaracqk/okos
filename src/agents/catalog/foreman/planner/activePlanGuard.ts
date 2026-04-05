@@ -15,7 +15,7 @@ function buildActivePlanCorrectionMessage(activePlanSummary: string) {
       'Сделай один из следующих шагов:',
       '- вызови `approve_step` (runtime запустит следующую pending подзадачу)',
       '- или пересобери план через `new_execution_plan([...])`, если нужны другие входные данные для хвоста',
-      '- или закрой план через `finish_execution_plan(outcome=completed|failed, summary=...)`; runtime сразу завершит граф этим итогом',
+      '- или закрой план через `finish_catalog_turn(outcome=completed|failed, summary=...)`; runtime сразу завершит граф этим итогом',
       'Текущий активный план:',
       activePlanSummary,
     ].join('\n')

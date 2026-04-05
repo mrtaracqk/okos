@@ -7,7 +7,7 @@ const PLAYBOOK_RUNTIME_MARKERS = [
   'completed_step.worker_result',
   'next_step.tool',
   'report_worker_result',
-  'finish_execution_plan.summary',
+  'finish_catalog_turn.summary',
 ];
 
 describe('catalog playbook surface invariants', () => {

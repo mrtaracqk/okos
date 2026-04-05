@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { CATALOG_WORKER_IDS } from '../../../../contracts/catalogExecutionOwners';
-import { renderCatalogForemanWorkerCapabilities } from '../../foreman/planner/capabilitiesSummary';
+import { renderCatalogForemanGlobalRoutingPolicy } from '../../foreman/planner/globalRoutingPolicy';
 import { listCategoriesTool } from '../tools/woo/categoryTools';
 import {
   buildCatalogWorkerIds,
@@ -41,25 +41,28 @@ describe('catalog specialist spec invariants', () => {
     expect([...CATALOG_WORKER_IDS]).toEqual(buildCatalogWorkerIds(CATALOG_SPECIALIST_SPECS));
   });
 
-  test('capabilities summary renders tool affordance and does not inline routing prose', () => {
-    const summary = renderCatalogForemanWorkerCapabilities();
+  test('foreman zone prompt embeds per-worker routing bullets in one section', () => {
+    const section = renderCatalogForemanGlobalRoutingPolicy();
+
+    expect(section).toContain('## Зона и маршрутизация');
 
     for (const spec of CATALOG_SPECIALIST_SPECS) {
-      expect(summary).toContain(`### ${spec.id}`);
-      expect(summary).toContain(`\`${spec.tools.domainRead[0]?.name}\``);
-      expect(summary).toContain(`\`${spec.tools.domainMutations[0]?.name}\``);
-      expect(summary).toContain(spec.foreman.consultationSummary?.[0] ?? '');
-
+      expect(section).toContain(`### ${spec.id}`);
       for (const rule of spec.foreman.routingSummary) {
-        expect(summary).not.toContain(rule);
+        expect(section).toContain(rule);
+      }
+      for (const line of spec.foreman.consultationSummary ?? []) {
+        expect(section).not.toContain(line);
       }
     }
 
-    expect(summary).toContain('**Research lookup в соседних доменах:**');
-    expect(summary).toContain('**Консультирует:**');
+    expect(section).not.toContain('## Routing Policy');
+    expect(section).not.toContain('## Ownership (воркеры)');
+    expect(section).not.toContain('**Читает в своей зоне:**');
+    expect(section).not.toContain('wc_v3_');
   });
 
-  test('extending the spec list updates ids, registry, contracts, toolsets and capabilities in one place', () => {
+  test('extending the spec list updates ids, registry, contracts, toolsets and foreman routing text in one place', () => {
     const mockWorkerSpec = {
       id: 'mock-worker',
       tools: {
@@ -74,13 +77,16 @@ describe('catalog specialist spec invariants', () => {
         blockerRules: ['Если нужна чужая mutation, верни blocker.'],
       },
       foreman: {
-        routingSummary: ['Если конечный шаг mock-owned, сначала mock-worker.'],
+        routingSummary: [
+          'Mock-домен; только categories list для read; handoff при чужой mutation.',
+          'Если конечный шаг mock-owned, сначала mock-worker.',
+        ],
         consultationSummary: ['По каким случаям mock-worker остаётся owner-ом шага.'],
       },
     } as const satisfies CatalogSpecialistSpec<'mock-worker'>;
     const extendedSpecs = [...CATALOG_SPECIALIST_SPECS, mockWorkerSpec] as const;
     const ids = buildCatalogWorkerIds(extendedSpecs);
-    const summary = renderCatalogForemanWorkerCapabilities(extendedSpecs);
+    const section = renderCatalogForemanGlobalRoutingPolicy(extendedSpecs);
     const runtimeTools = getCatalogWorkerRuntimeToolsFromSpecs(extendedSpecs, 'mock-worker');
     const byId = Object.fromEntries(extendedSpecs.map((spec) => [spec.id, spec])) as Record<
       (typeof extendedSpecs)[number]['id'],
@@ -108,8 +114,8 @@ describe('catalog specialist spec invariants', () => {
       'По каким случаям mock-worker остаётся owner-ом шага.',
     ]);
     expect(runtimeTools).toEqual([listCategoriesTool]);
-    expect(summary).toContain('### mock-worker');
-    expect(summary).toContain('`wc_v3_products_categories_list`');
+    expect(section).toContain('### mock-worker');
+    expect(section).toContain(mockWorkerSpec.foreman.routingSummary[0]);
   });
 });
 

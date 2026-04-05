@@ -1,7 +1,7 @@
 import { SystemMessage } from '@langchain/core/messages';
 import { chatModel } from '../../../config';
 import { buildTraceAttributes, runAgentSpan, runLlmSpan } from '../../../observability/traceContext';
-import { PROMPTS } from '../../../prompts';
+import { PROMPTS } from '../../../prompts/prompts';
 import { type MainGraphState } from '../state';
 import { mainTools } from '../tools';
 

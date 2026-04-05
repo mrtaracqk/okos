@@ -3,7 +3,6 @@ import { type RuntimePlan, type RuntimePlanTask } from '../../../runtime/plannin
 import {
   buildExecutionResult,
   buildExecutionResultAdditionalKwargs,
-  buildExecutionResultRuntimeContextMessage,
   serializeExecutionResult,
 } from './executionResult';
 
@@ -150,45 +149,6 @@ describe('execution result invariants', () => {
     });
   });
 
-  test('runtime context message points foreman to worker_result as the canonical post-step surface', () => {
-    const result = buildExecutionResult({
-      phase: 'new_execution_plan',
-      executionSessionId: 'exec-4',
-      planEvent: 'created',
-      completedTaskId: 'task-1',
-      run: {
-        agent: 'product-worker',
-        task: 'Найти товар',
-        status: 'completed',
-        result: {
-          status: 'completed',
-          data: ['product_id=101'],
-          missingData: [],
-          note: null,
-          summary: 'Товар найден.',
-        },
-      },
-      plan: createPlan([
-        { taskId: 'task-1', title: 'Найти товар', owner: 'product-worker', status: 'completed' },
-        { taskId: 'task-2', title: 'Проверить вариации', owner: 'variation-worker', status: 'pending' },
-      ]),
-    });
-    const message = buildExecutionResultRuntimeContextMessage(result);
-    const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
-
-    expect(content).toContain('Runtime execution result below is the authoritative execution state.');
-    expect(content).toContain('Use `plan_update` to see whether the plan was created or replaced.');
-    expect(content).toContain(
-      'Reason from `completed_step.worker_result` as the canonical structured result of the just-finished step.'
-    );
-    expect(content).toContain(
-      'If `completed_step.worker_result` is null, use `completed_step.protocol_error` as the explicit runtime failure signal.'
-    );
-    expect(content).not.toContain('completed_step.highlights');
-    expect(content).toContain('Choose the next tool from `next_step.tool` and `next_step.task`');
-    expect(content).toContain('No WORKER_RESULT or narrative follow-up message will arrive after execution tools.');
-  });
-
   test('keeps protocol errors explicit instead of fabricating a worker_result', () => {
     const result = buildExecutionResult({
       phase: 'approve_step',
@@ -217,6 +177,6 @@ describe('execution result invariants', () => {
       message: 'worker did not send report_worker_result',
     });
     expect(result.completed_step).not.toHaveProperty('highlights');
-    expect(result.next_step.tool).toBe('finish_execution_plan');
+    expect(result.next_step.tool).toBe('finish_catalog_turn');
   });
 });

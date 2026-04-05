@@ -4,7 +4,7 @@ import {
 } from '../../../../../observability/traceContext';
 import { type CatalogPlanningDeps } from '../../runtimePlan/planningDeps';
 import { getCatalogAgentRuntimeRunId } from '../../runtimePlan/runtimePlanService';
-import { finishExecutionPlanInputSchema } from '../definitions/executionPlanTools';
+import { finishCatalogTurnInputSchema } from '../definitions/executionPlanTools';
 import {
   buildExecutionToolResultAttributes,
   buildExecutionToolStatusMessage,
@@ -14,21 +14,21 @@ import {
 } from '../protocol';
 import { type CatalogToolCall, type CatalogToolExecutionResult } from '../types';
 
-export async function handleFinishExecutionPlanToolCall(
+export async function handleFinishCatalogTurnToolCall(
   planningDeps: CatalogPlanningDeps,
   toolCall: CatalogToolCall
 ): Promise<CatalogToolExecutionResult> {
-  const parsedArgs = finishExecutionPlanInputSchema.safeParse(toolCall.args ?? {});
+  const parsedArgs = finishCatalogTurnInputSchema.safeParse(toolCall.args ?? {});
   const finishOutcome = parsedArgs.success ? parsedArgs.data.outcome : '(invalid)';
 
   return runToolSpan(
-    'catalog_agent.finish_execution_plan',
+    'catalog_agent.finish_catalog_turn',
     async () => {
       if (!parsedArgs.success) {
         return {
           toolMessage: toolReply(
             toolCall,
-            `Сбой finish_execution_plan: ${parsedArgs.error.issues[0]?.message ?? 'некорректные аргументы.'}`
+            `Сбой finish_catalog_turn: ${parsedArgs.error.issues[0]?.message ?? 'некорректные аргументы.'}`
           ),
         };
       }
@@ -42,8 +42,24 @@ export async function handleFinishExecutionPlanToolCall(
       }
 
       const summary = parsedArgs.data.summary.trim();
+      const activePlan = planningRuntime.getActivePlan(runId);
 
       try {
+        if (!activePlan) {
+          const finalizeOutcome = parsedArgs.data.outcome === 'completed' ? 'completed' : 'failed';
+          const ack =
+            parsedArgs.data.outcome === 'completed'
+              ? 'Итог зафиксирован (активного плана не было).'
+              : 'Итог зафиксирован как неуспех (активного плана не было).';
+          return {
+            toolMessage: toolReply(toolCall, ack),
+            completion: {
+              summary,
+              finalizeOutcome,
+            },
+          };
+        }
+
         if (parsedArgs.data.outcome === 'completed') {
           const plan = await planningRuntime.completePlan(runId);
           return {
@@ -69,7 +85,7 @@ export async function handleFinishExecutionPlanToolCall(
         return {
           toolMessage: toolReply(
             toolCall,
-            error instanceof Error ? error.message : 'Ошибка finish_execution_plan.'
+            error instanceof Error ? error.message : 'Ошибка finish_catalog_turn.'
           ),
         };
       }
@@ -80,7 +96,7 @@ export async function handleFinishExecutionPlanToolCall(
       }),
       mapResultAttributes: (result) => buildExecutionToolResultAttributes(result),
       statusMessage: ({ toolMessage }) =>
-        buildExecutionToolStatusMessage('finish_execution_plan', getToolMessageText(toolMessage)),
+        buildExecutionToolStatusMessage('finish_catalog_turn', getToolMessageText(toolMessage)),
     }
   );
 }

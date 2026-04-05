@@ -39,7 +39,7 @@ Runtime observability now goes to Phoenix spans, not Telegram `SYSTEM LOG` messa
 ## Tracing Minimum
 - Root span for one inbound Telegram turn: `assistant.turn`
 - Main graph spans: `main_graph.invoke`, `main_graph.response_agent`, `main_graph.catalog_agent_handoff`, `main_graph.final_response`
-- Catalog spans (subgraph under `main_graph.catalog_agent_handoff`): `catalog_agent.invoke`, `catalog_agent.planner`, `catalog_agent.planner_iteration`, `catalog_agent.dispatch_tools`, `catalog_agent.new_execution_plan`, `catalog_agent.approve_step`, `catalog_agent.finish_execution_plan`, `catalog_agent.worker_handoff`, `catalog_agent.inspect_playbook`, optional legacy `catalog_agent.manage_execution_plan`
+- Catalog spans (subgraph under `main_graph.catalog_agent_handoff`): `catalog_agent.invoke`, `catalog_agent.planner`, `catalog_agent.planner_iteration`, `catalog_agent.dispatch_tools`, `catalog_agent.new_execution_plan`, `catalog_agent.approve_step`, `catalog_agent.finish_catalog_turn`, `catalog_agent.worker_handoff`, `catalog_agent.inspect_playbook`, optional legacy `catalog_agent.manage_execution_plan`
 - Worker spans: `worker.tool_loop.agent`, `worker.tool_call`
 
 If a change affects orchestration, preserve trace continuity and useful attributes such as `session.id`, `user.id`, `run.thread_id`, worker/tool names, and failure metadata.

@@ -3,16 +3,18 @@ import {
   type CatalogSpecialistSpec,
 } from '../../specialists/specs';
 
-function renderSpecRoutingRules(spec: CatalogSpecialistSpec) {
+function renderWorkerRoutingBlock(spec: CatalogSpecialistSpec) {
   return [`### ${spec.id}`, ...spec.foreman.routingSummary.map((rule) => `- ${rule}`)].join('\n');
 }
 
+/** Единый блок: глобальные правила зоны + слой данных Woo + per-worker ownership/handoff (без второго `##` и без дубля с inventory tools). */
 export function renderCatalogForemanGlobalRoutingPolicy(
   specs: readonly CatalogSpecialistSpec[] = CATALOG_SPECIALIST_SPECS,
 ): string {
-  return `## Зона и границы
+  return `## Зона и маршрутизация
 
 - Работаешь только с каталогом: категории, глобальные атрибуты и термины, товары и вариации.
+- Слой данных Woo: категории — дерево \`parent\`; глобальные атрибуты и термины — общий справочник (термин только внутри атрибута); товар-родитель (\`simple\` / \`variable\`) vs вариации при известном \`product_id\` (цена/SKU на строке variation).
 - С наличием и остатками не работаешь.
 - Каталог напрямую не трогаешь: планируешь шаги и зовёшь воркеров.
 - Owner шага выбирай по конечному действию или конечному domain fact, а не по промежуточному prerequisite lookup.
@@ -21,7 +23,5 @@ export function renderCatalogForemanGlobalRoutingPolicy(
 - Делай ровно запрос: не раздувай план и не собирай лишние данные.
 - О недостатке входных данных говори только если задачу нельзя закрыть имеющимися tools.
 
-## Routing Policy
-
-${specs.map((spec) => renderSpecRoutingRules(spec)).join('\n\n')}`;
+${specs.map((spec) => renderWorkerRoutingBlock(spec)).join('\n\n')}`;
 }

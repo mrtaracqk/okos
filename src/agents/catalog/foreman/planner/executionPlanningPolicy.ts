@@ -1,25 +1,7 @@
-import { CATALOG_SPECIALIST_SPECS } from '../../specialists/specs';
-
-function renderCatalogWorkerOwnerUnion() {
-  return CATALOG_SPECIALIST_SPECS.map((spec) => spec.id).join(' | ');
-}
-
-function renderCatalogWorkerList() {
-  return CATALOG_SPECIALIST_SPECS.map((spec) => `- ${spec.id}`).join('\n');
-}
-
 export function renderCatalogExecutionPlanningPolicy(): string {
-  return `## Рабочий порядок
+  return `## План и handoff
 
-- Для цепочек с зависимостями между шагами сначала смотри \`inspect_catalog_playbook\`; простой одношаговый сценарий можно планировать сразу.
-- Перед вызовом воркера план обязателен.
-- План задаётся и полностью заменяется через \`new_execution_plan(planContext, tasks[])\`; повторный вызов снова запускает первую задачу и очищает старые \`upstreamArtifacts\`.
-- \`planContext\`: \`goal\`, \`facts\`, \`constraints\` — общий контекст плана.
-- Задача: \`taskId\`, \`responsible\` (${renderCatalogWorkerOwnerUnion()}), \`task\`, \`inputData.facts\`, \`inputData.constraints\`, \`inputData.contextNotes\`, \`responseStructure\`.
-- Каталог напрямую не трогаешь — только воркеры. На входе у воркера handoff: \`planContext\`, \`taskInput\`, опционально \`upstreamArtifacts\`.
-- В \`taskInput\` передавай \`objective\`, \`facts\`, \`constraints\`, \`expectedOutput\`, коротко \`contextNotes\`.
-- Формулируй handoff вокруг конечной задачи owner-а; не декомпозируй prerequisite lookup в отдельный workflow, если owner умеет снять неопределённость сам.
-
-Исполнители:
-${renderCatalogWorkerList()}`;
+- Перед вызовом воркера нужен активный план через \`new_execution_plan\`; структура \`planContext\`, \`tasks\`, полей шага — в Zod-схеме tool.
+- Owner шага выбирай по конечному действию или конечному факту домена; не выделяй отдельный шаг только для lookup, если owner сам может снять неопределённость своими read/list.
+- Повторный \`new_execution_plan\` — только когда меняется owner будущих шагов, их вход или цель (\`goal\`); иначе продолжай текущий план по \`catalog_execution_v3\` (\`approve_step\` / \`finish_catalog_turn\` по правилам ниже).`;
 }

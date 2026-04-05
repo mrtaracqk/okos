@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { approveStepTool, finishExecutionPlanTool, newExecutionPlanTool } from './executionPlanTools';
+import { approveStepTool, finishCatalogTurnTool, newExecutionPlanTool } from './executionPlanTools';
 
 function getDescription(tool: { description?: string }) {
   return tool.description ?? '';
@@ -9,7 +9,7 @@ describe('catalog foreman tool descriptions', () => {
   test('keep orchestration tools at affordance layer', () => {
     const newPlanDescription = getDescription(newExecutionPlanTool);
     const approveDescription = getDescription(approveStepTool);
-    const finishDescription = getDescription(finishExecutionPlanTool);
+    const finishDescription = getDescription(finishCatalogTurnTool);
     const combined = [newPlanDescription, approveDescription, finishDescription].join('\n');
 
     expect(newPlanDescription).toBe(
@@ -18,7 +18,9 @@ describe('catalog foreman tool descriptions', () => {
     expect(approveDescription).toBe(
       'Продолжить active plan со следующего approvable шага. Возвращает `catalog_execution_v3`.'
     );
-    expect(finishDescription).toBe('Завершить active plan и вернуть подтверждение финализации.');
+    expect(finishDescription).toBe(
+      'Зафиксировать итоговый ответ пользователю и закончить ход каталога. С активным планом закрывает его; без плана — только финальный ответ (консультация без воркеров).'
+    );
 
     for (const forbiddenSnippet of [
       '`planContext`',

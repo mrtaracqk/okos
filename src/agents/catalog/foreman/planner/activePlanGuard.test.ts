@@ -83,7 +83,7 @@ describe('applyActivePlanGuard', () => {
     let capturedMessages: unknown[] = [];
     const correctedResponse = new AIMessage({
       content: '',
-      tool_calls: [{ id: 'tool-1', name: 'finish_execution_plan', args: { outcome: 'completed', summary: 'ok' } }],
+      tool_calls: [{ id: 'tool-1', name: 'finish_catalog_turn', args: { outcome: 'completed', summary: 'ok' } }],
     });
 
     const result = await applyActivePlanGuard({

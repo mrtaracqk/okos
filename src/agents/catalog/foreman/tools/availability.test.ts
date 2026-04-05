@@ -22,10 +22,11 @@ function buildActivePlan(taskStatuses: RuntimePlan['tasks']) {
 }
 
 describe('getCatalogForemanToolNames', () => {
-  test('exposes only inspect and new_execution_plan before a plan exists', () => {
+  test('exposes inspect, new_execution_plan, and finish_catalog_turn before a plan exists', () => {
     expect(getCatalogForemanToolNames(null)).toEqual([
       'inspect_catalog_playbook',
       'new_execution_plan',
+      'finish_catalog_turn',
     ]);
   });
 
@@ -49,7 +50,7 @@ describe('getCatalogForemanToolNames', () => {
       'inspect_catalog_playbook',
       'new_execution_plan',
       'approve_step',
-      'finish_execution_plan',
+      'finish_catalog_turn',
     ]);
   });
 
@@ -72,7 +73,7 @@ describe('getCatalogForemanToolNames', () => {
     expect(getCatalogForemanToolNames(activePlan)).toEqual([
       'inspect_catalog_playbook',
       'new_execution_plan',
-      'finish_execution_plan',
+      'finish_catalog_turn',
     ]);
   });
 
@@ -89,7 +90,7 @@ describe('getCatalogForemanToolNames', () => {
     expect(getCatalogForemanToolNames(activePlan)).toEqual([
       'inspect_catalog_playbook',
       'new_execution_plan',
-      'finish_execution_plan',
+      'finish_catalog_turn',
     ]);
   });
 
@@ -104,7 +105,7 @@ describe('getCatalogForemanToolNames', () => {
     expect(resolveCatalogForemanToolRegistration('approve_step')?.sequenced).toBe(true);
     expect(resolveCatalogForemanToolRegistration('inspect_catalog_playbook')?.sequenced).toBe(false);
     expect(sequencedCatalogForemanToolNames).toEqual(
-      new Set(['new_execution_plan', 'approve_step', 'finish_execution_plan'])
+      new Set(['new_execution_plan', 'approve_step', 'finish_catalog_turn'])
     );
   });
 });

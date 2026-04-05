@@ -14,6 +14,7 @@ export type CatalogSpecialistWorkerContract = {
 };
 
 export type CatalogSpecialistForemanContract = {
+  /** Буллеты под `### {id}` в едином блоке зоны и маршрутизации foreman. */
   routingSummary: readonly string[];
   consultationSummary?: readonly string[];
 };

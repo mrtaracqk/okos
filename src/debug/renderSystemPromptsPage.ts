@@ -1,6 +1,6 @@
 import { renderPlaybookIndexForPrompt } from '../agents/catalog/playbooks';
 import { CATALOG_SPECIALIST_SPECS } from '../agents/catalog/specialists/specs';
-import { getCatalogWorkerPrompt, PROMPTS } from '../prompts';
+import { getCatalogWorkerPrompt, PROMPTS } from '../prompts/prompts';
 
 type PromptEntry = {
   id: string;

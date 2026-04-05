@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { getCatalogWorkerPrompt, PROMPTS } from './prompts';
-import { CATALOG_SPECIALIST_SPECS } from './agents/catalog/specialists/specs';
+import { CATALOG_SPECIALIST_SPECS } from '../agents/catalog/specialists/specs';
 
 function expectAll(text: string, snippets: string[]) {
   for (const snippet of snippets) {
@@ -21,25 +21,25 @@ describe('catalog prompt surface invariants', () => {
     expectAll(prompt, [
       '## Роль',
       '## Общие правила',
-      '## Зона и границы',
-      '## Routing Policy',
+      '## Зона и маршрутизация',
+      '### category-worker',
       '## Консультации',
-      '## Возможности воркеров (инструменты)',
-      '## Схема каталога',
-      '## Рабочий порядок',
-      '## Перепланирование',
       '## Playbook',
+      '## План и handoff',
+      '## После шага воркера',
       '## Итог',
+      'В сообщениях пользователю:',
       'catalog_execution_v3',
-      'plan_update',
       'completed_step.worker_result',
       'next_step.tool',
     ]);
 
+    expect(prompt.indexOf('## Итог')).toBeLessThan(prompt.indexOf('В сообщениях пользователю:'));
+
     expectNone(prompt, [
       '**Дата и время:**',
       '## Слой данных и что делать после шага воркера',
-      '## План: `new_execution_plan`, `approve_step`, `finish_execution_plan`',
+      '## План: `new_execution_plan`, `approve_step`, `finish_catalog_turn`',
       '## Делегирование воркерам',
       '### Поведение',
       '### Неточные пользовательские формулировки',
@@ -49,8 +49,8 @@ describe('catalog prompt surface invariants', () => {
   test('foreman prompt marks worker_result as canonical runtime result', () => {
     const prompt = PROMPTS.CATALOG_AGENT.SYSTEM('Playbook: demo');
 
-    expect(prompt).toContain('`completed_step.worker_result` — канонический structured result последнего шага');
-    expect(prompt).toContain('если `completed_step.worker_result=null`, используй `completed_step.protocol_error`');
+    expect(prompt).toContain('Смысл последнего шага — из `completed_step.worker_result`');
+    expect(prompt).toContain('Если `completed_step.worker_result=null`, используй `completed_step.protocol_error`');
     expect(prompt).not.toContain('`completed_step.highlights`');
   });
 
@@ -69,7 +69,7 @@ describe('catalog prompt surface invariants', () => {
         '## Использование tools',
         '## Консультации',
         '## Blockers и завершение',
-        '## Формат завершения',
+        '## Завершение',
         'report_worker_result',
       ]);
 
@@ -84,7 +84,7 @@ describe('catalog prompt surface invariants', () => {
         'plan_update',
         'next_step.tool',
         'inspect_catalog_playbook',
-        'finish_execution_plan.summary',
+        'finish_catalog_turn.summary',
         'Playbook:',
         '## Вход задачи',
         '## Как работать',

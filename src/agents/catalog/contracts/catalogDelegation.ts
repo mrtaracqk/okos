@@ -5,7 +5,7 @@ export type CatalogDelegationResult = {
   summary: string;
 };
 
-/** Префикс для успешного итога в чате (строка из `finish_execution_plan.summary` без префикса). */
+/** Префикс для успешного итога в чате (строка из `finish_catalog_turn.summary` без префикса). */
 export const CATALOG_SUCCESS_USER_PREFIX = 'Готово: ';
 
 /** Текст сообщения пользователю после делегирования в catalog-agent (детерминированно от статуса). */

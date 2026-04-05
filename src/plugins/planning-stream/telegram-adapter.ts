@@ -2,7 +2,6 @@ import TelegramService from '../../services/telegram';
 import type {
   PlanningChannelAdapter,
   RuntimePlan,
-  RuntimePlanStatus,
   RuntimePlanTask,
 } from '../../runtime/planning/types';
 
@@ -12,13 +11,6 @@ const taskStatusIcons: Record<RuntimePlanTask['status'], string> = {
   completed: '✅',
   failed: '❌',
   skipped: '⏭️',
-};
-
-const planStatusLabels: Record<RuntimePlanStatus, string> = {
-  active: 'в работе',
-  completed: 'завершен',
-  failed: 'завершен с ошибкой',
-  abandoned: 'прерван',
 };
 
 function formatTask(task: RuntimePlanTask) {
@@ -31,16 +23,15 @@ function formatTask(task: RuntimePlanTask) {
 }
 
 export function renderRuntimePlan(plan: RuntimePlan) {
-  const lines = [`Статус: ${planStatusLabels[plan.status]}`];
-
-  if (plan.status === 'active' && plan.tasks.some((task) => task.status === 'in_progress')) {
-    lines.push('Сейчас выполняется шаг, отмеченный 🔄.');
+  if (plan.tasks.length === 0) {
+    return '';
   }
 
-  lines.push('');
-  lines.push(...plan.tasks.map(formatTask).flatMap((task, index) => (index === 0 ? [task] : ['', task])));
-
-  return lines.join('\n').trim();
+  return plan.tasks
+    .map(formatTask)
+    .flatMap((task, index) => (index === 0 ? [task] : ['', task]))
+    .join('\n')
+    .trim();
 }
 
 export class TelegramPlanningAdapter implements PlanningChannelAdapter {

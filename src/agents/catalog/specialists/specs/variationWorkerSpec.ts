@@ -58,8 +58,8 @@ export const variationWorkerSpec = {
   },
   foreman: {
     routingSummary: [
-      'Variation-worker отвечает за чтение и изменение конкретных variation внутри уже определённого variable product.',
-      'Изменения родительского товара ведёт product-worker; если для variation не хватает родителя или глобальной taxonomy, сначала вызывается product-worker или attribute-worker.',
+      'Variation известного variable product; read/list родителя и глобальных атрибутов/term-ов только для контекста и id.',
+      'Родитель или глобальная taxonomy — product-worker или attribute-worker, если их не хватает для variation-шага.',
     ],
     consultationSummary: [
       'Когда owner шага variation-worker, а когда задачу должен вести product-worker.',

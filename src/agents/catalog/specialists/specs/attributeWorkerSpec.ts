@@ -45,8 +45,8 @@ export const attributeWorkerSpec = {
   },
   foreman: {
     routingSummary: [
-      'Attribute-worker отвечает только за глобальные attributes и terms в taxonomy Woo.',
-      'Назначение атрибутов товару делает product-worker, опции конкретной variation делает variation-worker; если для этого не хватает глобального attribute/term, сначала вызывается attribute-worker.',
+      'Глобальные attributes и terms; только tools taxonomy, без read в соседних доменах.',
+      'Назначение атрибутов на карточку — product-worker, опции variation — variation-worker; если не хватает глобального attribute/term — сначала attribute-worker.',
     ],
     consultationSummary: [
       'Когда нужен attribute-worker, а когда задачу должны вести product-worker или variation-worker.',

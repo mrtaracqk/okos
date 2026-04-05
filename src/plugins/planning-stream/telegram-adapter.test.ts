@@ -30,13 +30,12 @@ describe('renderRuntimePlan', () => {
       ],
     };
 
-    expect(renderRuntimePlan(plan)).toContain('Статус: завершен с ошибкой');
     expect(renderRuntimePlan(plan)).toContain('✅ Определить или создать категорию');
     expect(renderRuntimePlan(plan)).toContain('❌ Подготовить атрибуты');
     expect(renderRuntimePlan(plan)).toContain('Ответственный: attribute-worker');
   });
 
-  it('shows immediate execution hint when a task is already in progress', () => {
+  it('renders in-progress task with icon only (no plan-level status lines)', () => {
     const plan: RuntimePlan = {
       runId: 'run-2',
       chatId: 101,
@@ -56,8 +55,8 @@ describe('renderRuntimePlan', () => {
       ],
     };
 
-    expect(renderRuntimePlan(plan)).toContain('Статус: в работе');
-    expect(renderRuntimePlan(plan)).toContain('Сейчас выполняется шаг, отмеченный 🔄.');
+    expect(renderRuntimePlan(plan)).not.toContain('Статус:');
+    expect(renderRuntimePlan(plan)).not.toContain('Сейчас выполняется');
     expect(renderRuntimePlan(plan)).toContain('🔄 Найти товар');
   });
 });

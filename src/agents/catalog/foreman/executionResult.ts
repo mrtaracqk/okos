@@ -1,4 +1,3 @@
-import { SystemMessage } from '@langchain/core/messages';
 import { randomUUID } from 'node:crypto';
 import { type RuntimePlan } from '../../../runtime/planning/types';
 import { toJsonSafeValue } from '../../shared/jsonSafe';
@@ -12,7 +11,7 @@ export const EXECUTION_RESULT_REASON_CODES = [
 ] as const;
 
 export type ExecutionResultReasonCode = (typeof EXECUTION_RESULT_REASON_CODES)[number];
-export type ExecutionResultNextTool = 'approve_step' | 'new_execution_plan' | 'finish_execution_plan';
+export type ExecutionResultNextTool = 'approve_step' | 'new_execution_plan' | 'finish_catalog_turn';
 export type ExecutionResultPhase = 'new_execution_plan' | 'approve_step';
 export type ExecutionPlanEvent = 'created' | 'replaced' | 'advanced';
 
@@ -101,10 +100,10 @@ function getNextStep(run: WorkerRun, plan: RuntimePlan): CatalogExecutionResult[
   const nextPendingTask = plan.tasks.find((task) => task.status === 'pending');
   if (!nextPendingTask) {
     return {
-      tool: 'finish_execution_plan',
+      tool: 'finish_catalog_turn',
       reason_code: 'plan_has_no_pending_steps',
       task: null,
-      summary: 'Следующий шаг: завершить выполнение через finish_execution_plan.',
+      summary: 'Следующий шаг: завершить выполнение через finish_catalog_turn.',
     };
   }
 
@@ -186,20 +185,4 @@ export function serializeExecutionResult(result: CatalogExecutionResult) {
 
 export function buildExecutionResultAdditionalKwargs(result: CatalogExecutionResult) {
   return toJsonSafeValue(result) as Record<string, unknown>;
-}
-
-export function buildExecutionResultRuntimeContextMessage(result: CatalogExecutionResult) {
-  return new SystemMessage(
-    [
-      'Runtime execution result below is the authoritative execution state.',
-      'No WORKER_RESULT or narrative follow-up message will arrive after execution tools.',
-      'Use `plan_update` to see whether the plan was created or replaced.',
-      'Reason from `completed_step.worker_result` as the canonical structured result of the just-finished step.',
-      'If `completed_step.worker_result` is null, use `completed_step.protocol_error` as the explicit runtime failure signal.',
-      'Choose the next tool from `next_step.tool` and `next_step.task` using the active runtime plan only.',
-      '```json',
-      serializeExecutionResult(result),
-      '```',
-    ].join('\n')
-  );
 }

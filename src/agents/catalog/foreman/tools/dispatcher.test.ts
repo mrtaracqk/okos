@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { PlanningCore } from '../../../../runtime/planning/core';
 import { type CatalogExecutionResult } from '../executionResult';
 import { type CatalogPlanningDeps } from '../runtimePlan/planningDeps';
-import { approveStepTool, finishExecutionPlanTool, newExecutionPlanTool } from './definitions/executionPlanTools';
+import { approveStepTool, finishCatalogTurnTool, newExecutionPlanTool } from './definitions/executionPlanTools';
 
 type PlanningRunContext = {
   runId: string;
@@ -506,7 +506,7 @@ describe('executeCatalogToolCall', () => {
     });
   });
 
-  test('failed result without pending steps routes planner to finish_execution_plan', async () => {
+  test('failed result without pending steps routes planner to finish_catalog_turn', async () => {
     workerResults.set('product-worker', {
       finalResult: {
         status: 'failed',
@@ -536,10 +536,10 @@ describe('executeCatalogToolCall', () => {
 
     expect(payload.plan.status).toBe('failed');
     expect(payload.completed_step).not.toHaveProperty('highlights');
-    expect(payload.next_step.tool).toBe('finish_execution_plan');
+    expect(payload.next_step.tool).toBe('finish_catalog_turn');
     expect(payload.next_step.reason_code).toBe('plan_has_no_pending_steps');
     expect(payload.next_step.task).toBeNull();
-    expect(payload.next_step.summary).toBe('Следующий шаг: завершить выполнение через finish_execution_plan.');
+    expect(payload.next_step.summary).toBe('Следующий шаг: завершить выполнение через finish_catalog_turn.');
   });
 
   test('missing report_worker_result returns a deterministic protocol error without inventing a summary', async () => {
@@ -575,11 +575,11 @@ describe('executeCatalogToolCall', () => {
         'Протокол воркера нарушен: "product-worker" завершил работу без финального report_worker_result. Используй этот текст только как промежуточный сигнал и при необходимости перепоручи следующий шаг явно.',
     });
     expect(payload.completed_step).not.toHaveProperty('highlights');
-    expect(payload.next_step.tool).toBe('finish_execution_plan');
+    expect(payload.next_step.tool).toBe('finish_catalog_turn');
     expect(planningRuntime.getActivePlan('run-1')?.tasks[0]?.status).toBe('failed');
   });
 
-  test('finish_execution_plan clears active execution result state', async () => {
+  test('finish_catalog_turn clears active execution result state', async () => {
     await planningRuntime.createPlan({
       runId: 'run-1',
       chatId: 101,
@@ -623,10 +623,10 @@ describe('executeCatalogToolCall', () => {
           },
         },
         next_step: {
-          tool: 'finish_execution_plan',
+          tool: 'finish_catalog_turn',
           reason_code: 'plan_has_no_pending_steps',
           task: null,
-          summary: 'Следующий шаг: завершить выполнение через finish_execution_plan.',
+          summary: 'Следующий шаг: завершить выполнение через finish_catalog_turn.',
         },
       },
     };
@@ -634,7 +634,7 @@ describe('executeCatalogToolCall', () => {
     const result = await executeToolCall(
       {
         id: 'tool-call-3',
-        name: finishExecutionPlanTool.name,
+        name: finishCatalogTurnTool.name,
         args: {
           outcome: 'completed',
           summary: 'Пользовательский ответ готов.',
