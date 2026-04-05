@@ -14,6 +14,9 @@ describe('renderCatalogForemanWorkerCapabilities', () => {
     expect(summary).toContain(
       '**Research lookup в соседних доменах:** `wc_v3_products_list`, `wc_v3_products_read`',
     );
+    expect(summary).toContain(
+      '**Консультирует:** Когда owner шага variation-worker, а когда задачу должен вести product-worker.',
+    );
   });
 
   test('is embedded into the foreman system prompt', () => {

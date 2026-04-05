@@ -9,14 +9,10 @@ export const responseAgentNode = async (state: MainGraphState): Promise<Partial<
   return runAgentSpan(
     'main_graph.response_agent',
     async () => {
-      const { messages, chatId } = state;
+      const { messages } = state;
       const model = chatModel.bindTools(mainTools);
 
       let systemPrompt = PROMPTS.MAIN.SYSTEM();
-
-      systemPrompt += `\n\n<additional-context>
-Chat ID: ${chatId}`;
-      systemPrompt += '\n</additional-context>\n';
 
       const systemMessage = new SystemMessage(systemPrompt);
       const llmMessages = [systemMessage, ...messages];

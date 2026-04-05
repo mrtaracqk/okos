@@ -26,13 +26,16 @@ export const attributeWorkerSpec = {
     ],
     researchRead: [],
   },
-  knowledge: {
-    ownershipRules: [
+  worker: {
+    responsibility: [
       'Ты управляешь только глобальными product attributes и их term-ами, а не полями конкретной карточки товара.',
       'Ты можешь подготовить taxonomy для вариативного товара, но не назначаешь атрибуты родительскому товару и не управляешь дочерними variation.',
       'Если задача про значения атрибутов у конкретного товара или variation, это уже зона product-worker или variation-worker.',
     ],
-    lookupRules: [
+    workflow: [
+      'Держи шаг в глобальной taxonomy: создай или обнови attribute/term, затем сразу верни подтверждённый результат без перехода к product-level changes.',
+    ],
+    toolUsage: [
       'Любая операция с term-ами привязана к конкретному attribute_id; прямого поиска term-а без attribute_id нет, поэтому если attribute ещё не установлен, сначала найди или прочитай сам атрибут.',
       'Перед созданием attribute или term-а сначала проверяй существующие сущности, чтобы не плодить дубликаты с тем же смыслом.',
     ],
@@ -40,8 +43,13 @@ export const attributeWorkerSpec = {
       'Если после lookup видно, что конечный шаг относится к карточке товара или к конкретной variation, верни blocker на product-worker или variation-worker.',
     ],
   },
-  routingRules: [
-    'Атрибуты на родителе variable: если конечный шаг — создать или обновить родительский товар либо его product-level attributes, сначала product-worker; attribute-worker нужен только когда lookup показал, что глобального attribute / term ещё нет и его надо создать.',
-    'Глобальные атрибуты/термины — attribute-worker; родитель variable получает `attributes` через product-worker; сочетание опций на SKU — variation-worker.',
-  ],
+  foreman: {
+    routingSummary: [
+      'Attribute-worker отвечает только за глобальные attributes и terms в taxonomy Woo.',
+      'Назначение атрибутов товару делает product-worker, опции конкретной variation делает variation-worker; если для этого не хватает глобального attribute/term, сначала вызывается attribute-worker.',
+    ],
+    consultationSummary: [
+      'Когда нужен attribute-worker, а когда задачу должны вести product-worker или variation-worker.',
+    ],
+  },
 } as const satisfies CatalogSpecialistSpec<'attribute-worker'>;

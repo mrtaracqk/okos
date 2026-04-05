@@ -36,11 +36,7 @@ function createCatalogWorkerDefinition(spec: CatalogSpecialistSpec<CatalogWorker
   const graph = createWorkerLoopGraph({
     model: chatModel,
     tools,
-    systemPrompt: () =>
-      getCatalogWorkerPrompt(
-        spec.id,
-        tools.map((tool) => tool.name)
-      ),
+    systemPrompt: () => getCatalogWorkerPrompt(spec.id),
     renderHandoffMessage: renderWorkerHandoffMessage,
     extractFinalResult: extractCatalogFinalResult,
   }).compile({

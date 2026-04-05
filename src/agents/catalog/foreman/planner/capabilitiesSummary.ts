@@ -19,6 +19,12 @@ function renderCapabilitiesSection(spec: CatalogSpecialistSpec) {
     );
   }
 
+  if (spec.foreman.consultationSummary && spec.foreman.consultationSummary.length > 0) {
+    lines.push(
+      `- **Консультирует:** ${spec.foreman.consultationSummary.join('; ')}`,
+    );
+  }
+
   return lines.join('\n');
 }
 

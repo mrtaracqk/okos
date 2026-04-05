@@ -1,48 +1,68 @@
 import { describe, expect, test } from 'bun:test';
-import { getCatalogPlaybookIds, getCatalogPlaybookInstructions, renderPlaybookIndexForPrompt } from './index';
+import { getCatalogPlaybookIds, getCatalogPlaybookTemplate, renderPlaybookIndexForPrompt } from './index';
 
-describe('catalog playbooks stage 5 routing matrix', () => {
-  test('renders owner-first worker order for simple product creation', () => {
+const PLAYBOOK_RUNTIME_MARKERS = [
+  'catalog_execution_v3',
+  'plan_update',
+  'completed_step.worker_result',
+  'next_step.tool',
+  'report_worker_result',
+  'finish_execution_plan.summary',
+];
+
+describe('catalog playbook surface invariants', () => {
+  test('prompt index renders one compact entry per known playbook', () => {
     const index = renderPlaybookIndexForPrompt();
+    const ids = getCatalogPlaybookIds();
 
-    expect(index).toContain('Playbook: add-simple-product');
-    expect(index).toContain('Порядок воркеров: product-worker -> category-worker (fallback) -> product-worker (retry)');
+    expect(index.match(/^Playbook:/gm)?.length).toBe(ids.length);
+
+    for (const id of ids) {
+      expect(index).toContain(`Playbook: ${id}`);
+      expect(index).toContain('Сводка:');
+      expect(index).toContain('Порядок воркеров:');
+    }
   });
 
-  test('describes product-worker as the initial owner for simple product creation', () => {
-    const instructions = getCatalogPlaybookInstructions('add-simple-product');
+  test('detailed playbooks render short decision templates without leaking runtime execution protocol', () => {
+    for (const id of getCatalogPlaybookIds()) {
+      const template = getCatalogPlaybookTemplate(id);
 
-    expect(instructions).toContain('Owner конечного действия — product-worker');
-    expect(instructions).toContain('category-worker подключается только если lookup product-worker показал');
-    expect(instructions).toContain('### 1. Создание товара и lookup категории -> product-worker');
-    expect(instructions).not.toContain('category-worker подберёт или создаст подходящую на основе названия товара');
+      expect(template).toBeDefined();
+      expect(template).toContain(`Playbook: ${id}`);
+      expect(template).toContain('Сводка:');
+      expect(template).toContain('Порядок воркеров:');
+      expect(template).toContain('Когда использовать:');
+      expect(template).toContain('Сигналы входа:');
+      expect(template).toContain('Скелет плана:');
+      expect(template).toContain('Fallbacks:');
+      expect(template).toContain('Готово когда:');
+
+      for (const marker of PLAYBOOK_RUNTIME_MARKERS) {
+        expect(template).not.toContain(marker);
+      }
+    }
   });
 
-  test('describes owner-first routing with blocker fallbacks for variable products', () => {
-    const instructions = getCatalogPlaybookInstructions('add-variable-product');
+  test('playbooks stay concise and keep only scenario-specific skeletons', () => {
+    const simpleProduct = getCatalogPlaybookTemplate('add-simple-product');
+    const variableProduct = getCatalogPlaybookTemplate('add-variable-product');
+    const variation = getCatalogPlaybookTemplate('add-product-variation');
 
-    expect(instructions).toContain('Owner шага создания родительского variable product — product-worker.');
-    expect(instructions).toContain('category-worker и attribute-worker подключаются только по blocker');
-    expect(instructions).toContain('### 1. Создание родительского товара -> product-worker');
-    expect(instructions).toContain('### 2. Подготовка внешнего prerequisite -> category-worker или attribute-worker');
-    expect(instructions).toContain('Если после минимального lookup нельзя надёжно выбрать категорию, атрибут или term');
-    expect(instructions).toContain('Если не указана, товар можно создать без привязки категории.');
-  });
-
-  test('adds a variation-owned playbook with product and attribute fallback blockers', () => {
-    const index = renderPlaybookIndexForPrompt();
-    const instructions = getCatalogPlaybookInstructions('add-product-variation');
-
-    expect(getCatalogPlaybookIds()).toContain('add-product-variation');
-    expect(index).toContain('Playbook: add-product-variation');
-    expect(index).toContain(
+    expect(simpleProduct).toContain(
+      'Порядок воркеров: product-worker -> category-worker (fallback) -> product-worker (retry)'
+    );
+    expect(variableProduct).toContain(
+      'Порядок воркеров: product-worker -> category-worker / attribute-worker (fallback) -> product-worker (retry) -> variation-worker'
+    );
+    expect(variation).toContain(
       'Порядок воркеров: variation-worker -> product-worker / attribute-worker (fallback) -> variation-worker (retry)'
     );
-    expect(instructions).toContain('Owner конечного действия — variation-worker');
-    expect(instructions).toContain('variation-worker сам пытается разрешить product_id родителя и taxonomy context атрибутов');
-    expect(instructions).toContain('Если lookup показал, что родитель не найден, не является variable');
-    expect(instructions).toContain('Если lookup показал, что глобального attribute или term-а не существует, вернуть blocker на attribute-worker.');
-    expect(instructions).toContain('### 2. Подготовка внешнего prerequisite -> product-worker или attribute-worker');
-    expect(instructions).toContain('### 3. Повторное создание variation -> variation-worker');
+
+    for (const template of [simpleProduct, variableProduct, variation]) {
+      expect(template).not.toContain('Канонические инструкции:');
+      expect(template).not.toContain('Ожидаемый результат');
+      expect(template).not.toContain('Принцип routing');
+    }
   });
 });

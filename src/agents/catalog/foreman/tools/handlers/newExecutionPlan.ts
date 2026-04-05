@@ -79,7 +79,6 @@ export async function handleNewExecutionPlanToolCall(
           phase: 'new_execution_plan',
           planEvent,
           executionSessionId,
-          revision: 1,
         });
       } catch (error) {
         return {

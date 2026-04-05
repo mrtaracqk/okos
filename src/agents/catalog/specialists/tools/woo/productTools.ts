@@ -110,8 +110,7 @@ export const toProductSummary = (product: any) => {
 
 export const listProductsTool = createWooTool({
   name: 'wc.v3.products_list',
-  description:
-    'Список товаров. Для permalink/url ищи через url->slug, для точного slug через slug, для SKU через sku или search_name_or_sku; общий search оставляй для обычного текста.',
+  description: 'Получить список товаров. Возвращает paged list payload.',
   requiresApproval: false,
   schema: productLookupInputSchema,
   run: async (input) => {
@@ -157,8 +156,7 @@ export const getProductTool = createWooTool({
 
 export const createProductTool = createWooTool({
   name: 'wc.v3.products_create',
-  description:
-    'Создать товар (POST /products). Доступны только name, type, status, category_ids, regular_price, attributes и default_attributes.',
+  description: 'Создать товар. Возвращает structured product payload.',
   requiresApproval: true,
   schema: createProductInputSchema,
   run: async (input, { client }) => {
@@ -177,8 +175,7 @@ export const createProductTool = createWooTool({
 
 export const updateProductTool = createWooTool({
   name: 'wc.v3.products_update',
-  description:
-    'Обновить товар (PUT /products/{id}). Доступны только name, status, category_ids и regular_price. Для attributes / default_attributes есть отдельные инструменты append/remove.',
+  description: 'Обновить товар по ID. Возвращает structured product payload.',
   requiresApproval: true,
   schema: updateProductInputSchema,
   run: async (input, { client }) => {

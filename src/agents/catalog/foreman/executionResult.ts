@@ -38,7 +38,6 @@ export type CatalogExecutionResult = {
     owner: string;
     status: WorkerRun['status'];
     summary: string;
-    highlights: string[];
     worker_result: WorkerRun['result'] | null;
     protocol_error?: WorkerRun['protocolError'];
   };
@@ -77,37 +76,6 @@ function getCompletedStepSummary(taskTitle: string, run: WorkerRun): string {
   }
 
   return `Шаг "${taskTitle}" завершён.`;
-}
-
-function getCompletedStepHighlights(taskTitle: string, run: WorkerRun): string[] {
-  const result = run.result;
-  if (!result) {
-    return run.protocolError ? [run.protocolError.message] : [];
-  }
-
-  const highlights: string[] = [];
-  const normalizedResultSummary = result.summary?.trim() ?? '';
-  const normalizedNote = result.note?.trim() ?? '';
-
-  if (normalizedResultSummary) {
-    highlights.push(normalizedResultSummary);
-  }
-
-  highlights.push(...result.data);
-
-  if (result.missingData.length > 0) {
-    highlights.push(`Недостающие данные: ${result.missingData.join(', ')}`);
-  }
-
-  if (result.blocker) {
-    highlights.push(`Blocker: ${result.blocker.kind} -> ${result.blocker.owner}: ${result.blocker.reason}`);
-  }
-
-  if (normalizedNote && normalizedNote !== normalizedResultSummary) {
-    highlights.push(normalizedNote);
-  }
-
-  return highlights;
 }
 
 function getPlanUpdate(
@@ -205,7 +173,6 @@ export function buildExecutionResult(params: {
       owner: completedTask?.owner ?? params.run.agent,
       status: params.run.status,
       summary: getCompletedStepSummary(completedTaskTitle, params.run),
-      highlights: getCompletedStepHighlights(completedTaskTitle, params.run),
       worker_result: params.run.result ?? null,
       ...(params.run.protocolError ? { protocol_error: params.run.protocolError } : {}),
     },
@@ -227,7 +194,8 @@ export function buildExecutionResultRuntimeContextMessage(result: CatalogExecuti
       'Runtime execution result below is the authoritative execution state.',
       'No WORKER_RESULT or narrative follow-up message will arrive after execution tools.',
       'Use `plan_update` to see whether the plan was created or replaced.',
-      'Read `completed_step.highlights` as the result of the just-finished step.',
+      'Reason from `completed_step.worker_result` as the canonical structured result of the just-finished step.',
+      'If `completed_step.worker_result` is null, use `completed_step.protocol_error` as the explicit runtime failure signal.',
       'Choose the next tool from `next_step.tool` and `next_step.task` using the active runtime plan only.',
       '```json',
       serializeExecutionResult(result),

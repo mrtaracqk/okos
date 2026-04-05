@@ -16,8 +16,7 @@ export type WorkerResultBlocker = {
 };
 
 /**
- * Shared envelope for worker result. Single canonical shape without
- * scenario-specific schemas. Kept for trace/log helpers and compatibility.
+ * Shared trace/log envelope derived from canonical WorkerResult.
  */
 export type WorkerResultEnvelope = {
   status: WorkerResultStatus;
@@ -30,13 +29,17 @@ export type WorkerResultEnvelope = {
 
 export type WorkerResult = {
   status: WorkerResultStatus;
+  /** Canonical structured facts/result lines for planner reasoning. */
   data: string[];
+  /** Canonical list of missing inputs or prerequisites. */
   missingData: string[];
+  /** Optional human-readable note for logs/operator reading. */
   note: string | null;
+  /** Optional structured blocker for cross-owner handoff or external mutation. */
   blocker?: WorkerResultBlocker | null;
   /** Optional; mapped to WorkerResultEnvelope.artifacts */
   artifacts?: unknown[];
-  /** Optional; mapped to WorkerResultEnvelope.summary (overrides note when set) */
+  /** Optional short digest for logs/operator reading; mapped to WorkerResultEnvelope.summary */
   summary?: string | null;
 };
 
@@ -77,13 +80,19 @@ const workerResultSchema = z.object({
     .max(500)
     .nullable()
     .optional()
-    .describe('Короткая фактическая заметка, если нужна.'),
+    .describe('Короткая фактическая заметка, если нужна. Planner reason-ит по data/missingData/blocker.'),
   blocker: workerResultBlockerSchema
     .nullable()
     .optional()
     .describe('Структурный blocker, если lookup показал внешний блокер или шаг вообще не твой.'),
   artifacts: z.array(z.unknown()).optional().describe('Опциональные артефакты результата.'),
-  summary: z.string().trim().max(1000).nullable().optional().describe('Краткое резюме результата.'),
+  summary: z
+    .string()
+    .trim()
+    .max(1000)
+    .nullable()
+    .optional()
+    .describe('Краткий human-readable digest результата для логов и операторского чтения.'),
 });
 
 function renderList(lines: string[], emptyValue = 'нет') {
@@ -121,7 +130,7 @@ export function normalizeWorkerResult(value: unknown): WorkerResult | null {
   };
 }
 
-/** Convert tool result to shared envelope for trace/log helpers. */
+/** Convert canonical WorkerResult to the trace/log envelope. */
 export function workerResultToEnvelope(result: WorkerResult): WorkerResultEnvelope {
   return {
     status: result.status,
@@ -195,7 +204,7 @@ export function createWorkerResultTool() {
     {
       name: WORKER_RESULT_TOOL_NAME,
       description:
-        'Финализируй итоговый ответ. Вызывай ровно один раз, когда задача завершена успешно, невозможна без недостающих данных (status=failed + missingData), упёрлась в чужую мутацию или чужой owner (status=failed + blocker) либо завершилась ошибкой. После этого не вызывай другие инструменты.',
+        'Зафиксировать итоговый worker result и завершить работу воркера.',
       schema: workerResultSchema,
     }
   );

@@ -36,15 +36,17 @@ export const variationWorkerSpec = {
       getAttributeTermTool,
     ],
   },
-  knowledge: {
-    ownershipRules: [
+  worker: {
+    responsibility: [
       'Ты работаешь только с дочерними variation существующего variable product.',
       'Чтение и изменение variation адресуются через пару product_id + variation id; если родитель не установлен во входе, сначала разреши его через доступный product lookup.',
       'Ты отвечаешь за факты и изменения конкретных variation: опции, цены, SKU, статусы и прочие поля строки вариации.',
       'Ты не меняешь поля родительского товара, его categories, общие attributes или default_attributes; это зона product-worker.',
+    ],
+    workflow: [
       'Инструменты batch и generate применяй только для набора variation внутри уже определённого родительского товара.',
     ],
-    lookupRules: [
+    toolUsage: [
       'Для подготовки variation-owned шага ты можешь делать read-only lookup родительского товара и глобальных атрибутов/term-ов, чтобы подтвердить product_id и attribute context.',
       'Lookup нужен только для подтверждения родителя, variation id и attribute context; не превращай его в самостоятельный workflow по созданию родителя или taxonomy.',
     ],
@@ -54,8 +56,14 @@ export const variationWorkerSpec = {
       'Если конечный шаг относится к родительскому товару, а не к variation, верни blocker на product-worker.',
     ],
   },
-  routingRules: [
-    'Если конечный шаг — создать, найти или обновить конкретную variation, сначала variation-worker; product-worker нужен только для parent-level mutations или когда blocker показал, что сначала надо подготовить родителя.',
-    'Цену или SKU **конкретной вариации** не поручать product-worker.',
-  ],
+  foreman: {
+    routingSummary: [
+      'Variation-worker отвечает за чтение и изменение конкретных variation внутри уже определённого variable product.',
+      'Изменения родительского товара ведёт product-worker; если для variation не хватает родителя или глобальной taxonomy, сначала вызывается product-worker или attribute-worker.',
+    ],
+    consultationSummary: [
+      'Когда owner шага variation-worker, а когда задачу должен вести product-worker.',
+      'Как variation-worker подтверждает product_id, variation id и attribute context перед mutation.',
+    ],
+  },
 } as const satisfies CatalogSpecialistSpec<'variation-worker'>;

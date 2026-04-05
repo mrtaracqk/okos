@@ -200,7 +200,6 @@ describe('executeCatalogToolCall', () => {
       owner: 'product-worker',
       status: 'completed',
       summary: 'Шаг "Найти товар по SKU" завершён.',
-      highlights: ['Товар найден и подтвержден.', 'product_id=101', 'sku=IP-17', 'lookup done'],
       worker_result: {
         status: 'completed',
         data: ['product_id=101', 'sku=IP-17'],
@@ -320,7 +319,7 @@ describe('executeCatalogToolCall', () => {
     expect(payload.plan_update).toBeNull();
     expect(payload.executionSessionId).toBe(first.executionResult?.executionSessionId ?? '');
     expect(payload.completed_step.title).toBe('Проверить вариации');
-    expect(payload.completed_step.highlights).toEqual(['Вариации проверены.', 'variation_id=201']);
+    expect(payload.completed_step).not.toHaveProperty('highlights');
     expect(payload.next_step.tool).toBe('approve_step');
     expect(payload.next_step.task?.title).toBe('Проверить категории товара');
     expect(payload.next_step.summary).toBe('Следующий шаг: выполнить "Проверить категории товара" через approve_step.');
@@ -498,11 +497,7 @@ describe('executeCatalogToolCall', () => {
     const payload = parseExecutionToolPayload(result.toolMessage.content);
 
     expect(payload.plan.status).toBe('failed');
-    expect(payload.completed_step.highlights).toEqual([
-      'Нужен другой owner.',
-      'Недостающие данные: approved_category_id',
-      'Blocker: wrong_owner -> category-worker: Сначала нужен category-worker.',
-    ]);
+    expect(payload.completed_step).not.toHaveProperty('highlights');
     expect(payload.next_step).toEqual({
       tool: 'new_execution_plan',
       reason_code: 'worker_blocker_requires_plan_rebuild',
@@ -540,7 +535,7 @@ describe('executeCatalogToolCall', () => {
     const payload = parseExecutionToolPayload(result.toolMessage.content);
 
     expect(payload.plan.status).toBe('failed');
-    expect(payload.completed_step.highlights).toEqual(['Недостаточно данных.', 'Недостающие данные: sku']);
+    expect(payload.completed_step).not.toHaveProperty('highlights');
     expect(payload.next_step.tool).toBe('finish_execution_plan');
     expect(payload.next_step.reason_code).toBe('plan_has_no_pending_steps');
     expect(payload.next_step.task).toBeNull();
@@ -579,9 +574,7 @@ describe('executeCatalogToolCall', () => {
       message:
         'Протокол воркера нарушен: "product-worker" завершил работу без финального report_worker_result. Используй этот текст только как промежуточный сигнал и при необходимости перепоручи следующий шаг явно.',
     });
-    expect(payload.completed_step.highlights).toEqual([
-      'Протокол воркера нарушен: "product-worker" завершил работу без финального report_worker_result. Используй этот текст только как промежуточный сигнал и при необходимости перепоручи следующий шаг явно.',
-    ]);
+    expect(payload.completed_step).not.toHaveProperty('highlights');
     expect(payload.next_step.tool).toBe('finish_execution_plan');
     expect(planningRuntime.getActivePlan('run-1')?.tasks[0]?.status).toBe('failed');
   });
@@ -622,7 +615,6 @@ describe('executeCatalogToolCall', () => {
           owner: 'product-worker',
           status: 'completed',
           summary: 'Шаг "Готовый шаг" завершён.',
-          highlights: ['ok'],
           worker_result: {
             status: 'completed',
             data: ['ok'],

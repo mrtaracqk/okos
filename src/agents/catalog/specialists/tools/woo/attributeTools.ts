@@ -13,8 +13,7 @@ import type {
 
 export const listAttributesTool = createWooTool({
   name: 'wc.v3.products_attributes_list',
-  description:
-    'Получить список глобальных атрибутов товаров. Обязательно: per_page и search; опционально: страница. Ответ: { items, count, total?, total_pages?, page?, per_page? }.',
+  description: 'Получить список глобальных атрибутов товаров. Возвращает paged list payload.',
   requiresApproval: false,
   schema: z.object({
     page: z.coerce.number().int().min(1).max(5).optional(),
@@ -54,7 +53,7 @@ export const getAttributeTool = createWooTool({
 
 export const createAttributeTool = createWooTool({
   name: 'wc.v3.products_attributes_create',
-  description: 'Создать глобальный атрибут товаров. Обязательно: name (название атрибута).',
+  description: 'Создать глобальный атрибут товаров.',
   requiresApproval: true,
   schema: z.object({
     name: z.string().min(1).describe('Название атрибута.'),
@@ -68,7 +67,7 @@ export const createAttributeTool = createWooTool({
 
 export const updateAttributeTool = createWooTool({
   name: 'wc.v3.products_attributes_update',
-  description: 'Обновить глобальный атрибут по ID. Передай только изменяемые поля.',
+  description: 'Обновить глобальный атрибут по ID.',
   requiresApproval: true,
   schema: z.object({
     id: z.coerce.number().int().min(1),
@@ -103,8 +102,7 @@ export const deleteAttributeTool = createWooTool({
 
 export const listAttributeTermsTool = createWooTool({
   name: 'wc.v3.products_attributes_terms_list',
-  description:
-    'Получить список значений (терминов) атрибута по attribute_id. Обязательно: per_page и search; опционально: страница. Ответ: { items, count, total?, total_pages?, page?, per_page? }.',
+  description: 'Получить список терминов атрибута. Возвращает paged list payload.',
   requiresApproval: false,
   schema: z.object({
     attribute_id: z.coerce.number().int().min(1).describe('ID атрибута.'),
@@ -150,7 +148,7 @@ export const getAttributeTermTool = createWooTool({
 
 export const createAttributeTermTool = createWooTool({
   name: 'wc.v3.products_attributes_terms_create',
-  description: 'Создать значение (термин) атрибута. Обязательно: attribute_id, name (значение).',
+  description: 'Создать термин атрибута.',
   requiresApproval: true,
   schema: z.object({
     attribute_id: z.coerce.number().int().min(1).describe('ID атрибута.'),
@@ -168,7 +166,7 @@ export const createAttributeTermTool = createWooTool({
 
 export const updateAttributeTermTool = createWooTool({
   name: 'wc.v3.products_attributes_terms_update',
-  description: 'Обновить термин атрибута по attribute_id и id. Передай только изменяемые поля.',
+  description: 'Обновить термин атрибута по attribute_id и id.',
   requiresApproval: true,
   schema: z.object({
     attribute_id: z.coerce.number().int().min(1),

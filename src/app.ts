@@ -4,6 +4,7 @@ import { Elysia } from 'elysia';
 import TelegramBot from 'node-telegram-bot-api';
 import { runWithTelegramRequestContext, type TelegramRequestContext } from './plugins/approval';
 import { handleClearHistory, handleMessage } from './handlers';
+import { renderSystemPromptsPage } from './debug/renderSystemPromptsPage';
 import MessageQueueService, { MessagePayload } from './services/messageQueue';
 import { RedisService } from './services/redis';
 import { handleSetModelCallback, sendSetModelWizard } from './services/setModelTelegram';
@@ -122,13 +123,14 @@ new Elysia()
       return renderHtml(`
       <a href="https://t.me/${botUser.username}">${botUser.username}</a> в сети.<br />Режим: ${
         isPolling ? 'Polling' : 'Webhook'
-      }
+      }<br /><a href="/system-prompts">System prompts</a>
       `);
     } catch (error) {
       console.error('Error in root route:', error);
       return renderHtml('Бот запускается. Попробуйте ещё раз через несколько секунд.');
     }
   })
+  .get('/system-prompts', () => renderSystemPromptsPage())
   .get('/healthz', () => ({
     ok: true,
   }))

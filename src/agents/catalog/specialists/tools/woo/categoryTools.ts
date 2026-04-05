@@ -19,8 +19,7 @@ const mapCategory = (item: ProductsCategoriesListResponse[number]) => ({
 
 export const listCategoriesTool = createWooTool({
   name: 'wc.v3.products_categories_list',
-  description:
-    'Получить список категорий. Поиск по названию (search) и/или по родителю (parent). Ответ: { items, count, total?, total_pages?, per_page }.',
+  description: 'Получить список категорий. Возвращает paged list payload.',
   requiresApproval: false,
   schema: z.object({
     search: z.string().optional().describe('Поиск по названию категории.'),
@@ -62,7 +61,7 @@ export const getCategoryTool = createWooTool({
 
 export const createCategoryTool = createWooTool({
   name: 'wc.v3.products_categories_create',
-  description: 'Создать категорию. Обязательно: name. Опционально: parent (ID родительской категории для подкатегории).',
+  description: 'Создать категорию.',
   requiresApproval: true,
   schema: z.object({
     name: z.string().min(1).describe('Название категории.'),
@@ -80,7 +79,7 @@ export const createCategoryTool = createWooTool({
 
 export const updateCategoryTool = createWooTool({
   name: 'wc.v3.products_categories_update',
-  description: 'Обновить категорию по ID. Передай только изменяемые поля.',
+  description: 'Обновить категорию по ID.',
   requiresApproval: true,
   schema: z.object({
     id: z.coerce.number().int().min(1),
@@ -104,7 +103,7 @@ export const updateCategoryTool = createWooTool({
 
 export const deleteCategoryTool = createWooTool({
   name: 'wc.v3.products_categories_delete',
-  description: 'Удалить категорию по ID. Опционально: force=true для постоянного удаления.',
+  description: 'Удалить категорию по ID.',
   requiresApproval: true,
   schema: z.object({
     id: z.coerce.number().int().min(1),

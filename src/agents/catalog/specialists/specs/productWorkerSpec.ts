@@ -39,15 +39,18 @@ export const productWorkerSpec = {
       getVariationTool,
     ],
   },
-  knowledge: {
-    ownershipRules: [
+  worker: {
+    responsibility: [
       'Ты работаешь только с родительской карточкой товара в рамках доступных tools: поиск/чтение, создание, обновление полей карточки, дублирование.',
+      'Если итоговый факт или изменение относятся к конкретной variation, owner уже variation-worker, даже если lookup начинался рядом с товаром.',
+      'Read-only доступ к variation нужен только как lookup-контекст; variation-specific mutation по-прежнему остаётся зоной variation-worker.',
+    ],
+    workflow: [
       'При создании variable product можно сразу передать initial attributes/default_attributes в products_create, если taxonomy уже подтверждена.',
       'На уже существующем товаре attributes/default_attributes меняй только через products_append_attribute и products_remove_attribute, не через products_update.',
       'Для variable product поля attributes и default_attributes относятся к родительскому товару и не заменяют список дочерних variation.',
-      'Read-only доступ к variation нужен только как lookup-контекст; variation-specific mutation по-прежнему остаётся зоной variation-worker.',
     ],
-    lookupRules: [
+    toolUsage: [
       'Для поиска товара обычно начинай с products_list, а когда нужен подтверждённый объект конкретного товара, переходи к products_read по ID.',
       'Если во входе есть permalink или URL товара, передавай url в products_list: tool сам извлечёт slug и выполнит точный lookup по slug.',
       'Если известен slug, ищи через slug; если известен SKU или строка может быть названием или SKU, предпочитай sku / search_name_or_sku; общий search оставляй для обычного текстового поиска.',
@@ -62,8 +65,14 @@ export const productWorkerSpec = {
       'Если конечный шаг относится к variation, а не к родительскому товару, верни blocker на variation-worker.',
     ],
   },
-  routingRules: [
-    'Создание и parent-level обновления товара, включая product-level attributes и categories, планируй на product-worker, если prerequisite-сущности уже существуют или могут быть подтверждены lookup-ом.',
-    'Сначала родитель variable (тип и атрибуты на нём), затем строки variation по `product_id`.',
-  ],
+  foreman: {
+    routingSummary: [
+      'Product-worker отвечает за создание и обновление родительской карточки товара, включая product-level categories, attributes и default_attributes.',
+      'Если задача уходит в создание taxonomy, категорий или конкретных variation, ownership переходит в category-worker, attribute-worker или variation-worker; после подготовки prerequisite шаг возвращается в product-worker.',
+    ],
+    consultationSummary: [
+      'Когда owner шага product-worker, а когда задачу должны вести category-worker, attribute-worker или variation-worker.',
+      'Как product-worker использует lookup для подтверждения prerequisite-сущностей без чужой mutation.',
+    ],
+  },
 } as const satisfies CatalogSpecialistSpec<'product-worker'>;

@@ -5,35 +5,35 @@ import { CATALOG_WORKER_IDS } from '../../../../../contracts/catalogExecutionOwn
 const workerTaskOwnerSchema = z.enum(CATALOG_WORKER_IDS);
 
 export const executionPlanContextSchema = z.object({
-  goal: z.string().trim().min(1),
-  facts: z.array(z.string()).default([]),
-  constraints: z.array(z.string()).default([]),
+  goal: z.string().trim().min(1).describe('Цель плана.'),
+  facts: z.array(z.string()).default([]).describe('Общие факты для всего плана.'),
+  constraints: z.array(z.string()).default([]).describe('Общие ограничения для всего плана.'),
 });
 
 export const executableTaskInputSchema = z.object({
-  taskId: z.string(),
-  responsible: workerTaskOwnerSchema,
-  task: z.string(),
+  taskId: z.string().describe('Стабильный ID шага.'),
+  responsible: workerTaskOwnerSchema.describe('Worker owner для шага.'),
+  task: z.string().describe('Краткая формулировка задачи.'),
   inputData: z.object({
-    facts: z.array(z.string()).default([]),
-    constraints: z.array(z.string()).default([]),
-    contextNotes: z.string().optional(),
-  }),
-  responseStructure: z.string(),
+    facts: z.array(z.string()).default([]).describe('Факты только для этого шага.'),
+    constraints: z.array(z.string()).default([]).describe('Ограничения только для этого шага.'),
+    contextNotes: z.string().optional().describe('Дополнительные пояснения для шага.'),
+  }).describe('Step-local input для воркера.'),
+  responseStructure: z.string().describe('Какой structured output ожидается от шага.'),
 });
 
 export const newExecutionPlanInputSchema = z.object({
-  planContext: executionPlanContextSchema,
-  tasks: z.array(executableTaskInputSchema).min(1),
+  planContext: executionPlanContextSchema.describe('Общий контекст executable plan.'),
+  tasks: z.array(executableTaskInputSchema).min(1).describe('Упорядоченный список шагов плана.'),
 });
 
 export const approveStepInputSchema = z.object({
-  reason: z.string().optional(),
+  reason: z.string().optional().describe('Короткая причина продолжения шага.'),
 });
 
 export const finishExecutionPlanInputSchema = z.object({
-  outcome: z.enum(['completed', 'failed']),
-  summary: z.string().trim().min(1),
+  outcome: z.enum(['completed', 'failed']).describe('Финальный исход плана.'),
+  summary: z.string().trim().min(1).describe('Итоговый ответ пользователю.'),
 });
 
 // NOTE: execution is implemented in `tools/dispatcher.ts` (see executeCatalogToolCall switch).
@@ -46,8 +46,7 @@ export const newExecutionPlanTool = tool(
   },
   {
     name: 'new_execution_plan',
-    description:
-      'Зафиксируй или полностью замени executable plan и запусти первую подзадачу (первая задача в списке становится in_progress). Передай общий planContext (goal/facts/constraints) для всего плана и step-local inputData у задач. Новый план всегда чистый: runtime сбросит artifacts от предыдущего плана. Если последний шаг уже успешен и следующий pending шаг можно выполнить с текущим execution result — не пересоздавай план, вызови approve_step. Tool result вернёт только JSON payload `catalog_execution_v3`; отдельного HumanMessage после вызова не будет.',
+    description: 'Создать или заменить active executable plan и запустить первый шаг. Возвращает `catalog_execution_v3`.',
     schema: newExecutionPlanInputSchema,
   }
 );
@@ -58,8 +57,7 @@ export const approveStepTool = tool(
   },
   {
     name: 'approve_step',
-    description:
-      'Продолжить план после результата воркера: runtime переводит следующую pending задачу в работу и запускает её. Следующий воркер получит planContext текущего плана, step-local inputData своей задачи и upstreamArtifacts только от непосредственно предыдущего completed шага, если они были. Вызывай по умолчанию, если `next_step.tool=approve_step` и не нужно менять planContext/tasks. Чтобы обновить общий контекст плана или хвост шагов — new_execution_plan; чтобы закончить работу — finish_execution_plan. Tool result вернёт только JSON payload `catalog_execution_v3`; отдельного HumanMessage после вызова не будет.',
+    description: 'Продолжить active plan со следующего approvable шага. Возвращает `catalog_execution_v3`.',
     schema: approveStepInputSchema,
   }
 );
@@ -70,8 +68,7 @@ export const finishExecutionPlanTool = tool(
   },
   {
     name: 'finish_execution_plan',
-    description:
-      'Завершить работу по активному плану: outcome=completed — успешный итог, outcome=failed — ошибка или невозможность выполнить запрос; summary — готовый ответ пользователю (обязателен), факты из воркеров переноси дословно, без служебных префиксов вроде «Готово:».',
+    description: 'Завершить active plan и вернуть подтверждение финализации.',
     schema: finishExecutionPlanInputSchema,
   }
 );
